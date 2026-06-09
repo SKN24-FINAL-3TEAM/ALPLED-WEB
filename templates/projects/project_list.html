@@ -3,16 +3,17 @@
 {% block title %}{{ title }} | ALPLED{% endblock %}
 
 {% block content %}
+<div
+  id="project-page-state"
+  data-open-project-user-search="{{ open_project_user_search|yesno:'true,false' }}"
+  data-open-project-user-search-role="{{ project_target_role|default:'manager' }}"
+  class="hidden"></div>
+
 <div class="space-y-6">
   <section class="space-y-4">
     <div class="flex items-end justify-between gap-4">
       <h1 class="text-2xl font-bold text-slate-900">{{ title }}</h1>
       <div class="flex items-center gap-3">
-        <select name="page_size" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
-          <option selected>10</option>
-          <option>20</option>
-          <option>50</option>
-        </select>
         <button type="button" data-modal-target="project-create-modal" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
           프로젝트 등록
         </button>
@@ -64,7 +65,7 @@
             </tr>
           {% empty %}
             <tr>
-              <td colspan="4" class="px-6 py-48">&nbsp;</td>
+              <td colspan="4" class="px-6 py-20 text-center text-sm text-slate-500">등록된 프로젝트가 없습니다.</td>
             </tr>
           {% endfor %}
         </tbody>

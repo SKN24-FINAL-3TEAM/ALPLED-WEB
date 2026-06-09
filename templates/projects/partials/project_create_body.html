@@ -1,58 +1,70 @@
-<div class="space-y-8">
+<form method="post" action="{% url 'project_list' %}" class="space-y-8" data-project-create-form>
+  {% csrf_token %}
+
   <div class="space-y-2">
-    <label for="project-name" class="block text-sm font-medium text-slate-900">프로젝트 명</label>
-    <input id="project-name" type="text" class="w-full max-w-xl rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="프로젝트 명을 입력해주세요.">
+    <label for="project-name" class="block text-sm font-medium text-slate-900">프로젝트명</label>
+    <input
+      id="project-name"
+      name="project_name"
+      type="text"
+      value="{{ project_name|default:'' }}"
+      class="w-full max-w-xl rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
+      placeholder="프로젝트명을 입력하세요.">
   </div>
 
   <section class="space-y-3">
     <div class="flex items-center justify-between">
       <h4 class="text-sm font-semibold text-slate-900">프로젝트 관리자</h4>
+      <button
+        type="button"
+        data-project-open-search="manager"
+        data-modal-target="project-user-search-modal"
+        class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+        추가
+      </button>
     </div>
-    <div class="flex flex-col gap-3 md:flex-row md:items-center">
-      <input type="text" class="w-full max-w-xl rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="사원번호를 입력해주세요">
-      <div class="flex gap-2">
-        <button type="button" data-modal-target="project-user-search-modal" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-          추가
-        </button>
-        <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-          검색
-        </button>
-      </div>
-    </div>
-    <div class="max-h-48 overflow-y-auto rounded-2xl bg-slate-100 p-4">
-      <div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm">
-        <span class="text-sm font-medium text-slate-900">USER001</span>
-        <button type="button" class="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600">삭제</button>
+    <input type="hidden" name="manager_user_ids" value="" data-project-role-input="manager">
+    <div class="space-y-3" data-project-role-list="manager">
+      <div data-project-empty class="rounded-xl bg-slate-100 px-4 py-5 text-center text-sm text-slate-500">
+        아직 추가된 관리자가 없습니다.
       </div>
     </div>
   </section>
 
   <section class="space-y-3">
     <div class="flex items-center justify-between">
-      <h4 class="text-sm font-semibold text-slate-900">팀원</h4>
+      <h4 class="text-sm font-semibold text-slate-900">담당</h4>
+      <button
+        type="button"
+        data-project-open-search="member"
+        data-modal-target="project-user-search-modal"
+        class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+        추가
+      </button>
     </div>
-    <div class="flex flex-col gap-3 md:flex-row md:items-center">
-      <input type="text" class="w-full max-w-xl rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="사원번호를 입력해주세요">
-      <div class="flex gap-2">
-        <button type="button" data-modal-target="project-user-search-modal" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-          추가
-        </button>
-        <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-          검색
-        </button>
-      </div>
-    </div>
-    <div class="max-h-48 overflow-y-auto rounded-2xl bg-slate-100 p-4">
-      <div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm">
-        <span class="text-sm font-medium text-slate-900">USER002</span>
-        <button type="button" class="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-600">삭제</button>
+    <input type="hidden" name="member_user_ids" value="" data-project-role-input="member">
+    <div class="space-y-3" data-project-role-list="member">
+      <div data-project-empty class="rounded-xl bg-slate-100 px-4 py-5 text-center text-sm text-slate-500">
+        아직 추가된 담당자가 없습니다.
       </div>
     </div>
   </section>
 
   <div class="flex justify-end">
-    <button type="button" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+    <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700" data-project-create-submit>
       프로젝트 등록
     </button>
   </div>
-</div>
+</form>
+
+<template id="project-user-item-template">
+  <div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm" data-project-user-item>
+    <div>
+      <p class="text-sm font-medium text-slate-900" data-project-user-name></p>
+      <p class="mt-1 text-xs text-slate-500" data-project-user-meta></p>
+    </div>
+    <button type="button" class="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700" data-project-remove-user>
+      삭제
+    </button>
+  </div>
+</template>

@@ -10,13 +10,6 @@
         <h1 class="text-2xl font-bold text-slate-900">{{ title }}</h1>
       </div>
       <div class="flex items-center gap-3">
-        <label class="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <select name="page_size" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm">
-            <option selected>10</option>
-            <option>20</option>
-            <option>50</option>
-          </select>
-        </label>
         <button type="button" data-modal-target="user-create-modal" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
           사용자 등록
         </button>
@@ -60,7 +53,7 @@
 
   <section class="rounded-2xl border border-slate-200 bg-white shadow-sm">
     <div class="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-      <h2 class="text-base font-semibold text-slate-900">사용자 {{ users|length }}</h2>
+      <h2 class="text-base font-semibold text-slate-900">사용자</h2>
     </div>
     <div class="overflow-x-auto">
       <table class="min-w-full text-left text-sm">

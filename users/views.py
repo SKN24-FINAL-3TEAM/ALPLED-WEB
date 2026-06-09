@@ -1,6 +1,7 @@
 from django.db.models import Q
 from django.shortcuts import render
 
+from common.signals import ensure_initial_reference_data
 from projects.models import ProjectUserRole
 from .models import User
 
@@ -20,6 +21,8 @@ def _demo_users():
 
 
 def user_list(request):
+    ensure_initial_reference_data()
+
     active = request.GET.get("active", "all")
     search_field = request.GET.get("field", "all")
     query = request.GET.get("q", "").strip()
