@@ -1,0 +1,34 @@
+{% load static %}
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ title|default:"ALPLED" }}{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <style>
+    html { scroll-behavior: smooth; }
+    body { font-family: "Noto Sans KR", system-ui, sans-serif; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 antialiased">
+  {% include "components/sidebar.html" %}
+
+  <div class="lg:pl-64">
+    <main class="min-h-screen p-4 sm:p-6 lg:p-8">
+      {% if messages %}
+        <div class="mb-6 space-y-3">
+          {% for message in messages %}
+            {% include "components/alert.html" with message=message %}
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script src="{% static 'js/app.js' %}"></script>
+</body>
+</html>

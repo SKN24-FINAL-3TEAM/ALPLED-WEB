@@ -1,0 +1,40 @@
+<div class="grid gap-6 md:grid-cols-2">
+  <div class="space-y-2">
+    <label for="user-create-name" class="block text-sm font-medium text-slate-900">이름</label>
+    <input id="user-create-name" type="text" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="이름을 입력해주세요">
+  </div>
+
+  <div class="space-y-2">
+    <label for="user-create-id" class="block text-sm font-medium text-slate-900">사원번호</label>
+    <input id="user-create-id" type="text" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="사원번호를 입력해주세요">
+  </div>
+
+  <div class="space-y-2">
+    <label for="user-create-dept" class="block text-sm font-medium text-slate-900">부서</label>
+    <input id="user-create-dept" type="text" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="부서를 입력해주세요">
+  </div>
+
+  <div class="space-y-2">
+    <label for="user-create-position" class="block text-sm font-medium text-slate-900">직급</label>
+    <input id="user-create-position" type="text" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400" placeholder="직급을 입력해주세요">
+  </div>
+
+  <div class="space-y-2">
+    <label for="user-create-password" class="block text-sm font-medium text-slate-900">임시 비밀번호</label>
+    <input id="user-create-password" type="text" value="abc1234" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
+  </div>
+
+  <div class="space-y-2">
+    <label for="user-create-active" class="block text-sm font-medium text-slate-900">활성화 여부</label>
+    <select id="user-create-active" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
+      <option>활성화</option>
+      <option>비활성화</option>
+    </select>
+  </div>
+</div>
+
+<div class="mt-8 flex justify-end">
+  <button type="button" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+    사용자 등록
+  </button>
+</div>
