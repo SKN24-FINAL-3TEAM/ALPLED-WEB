@@ -1,7 +1,7 @@
 (function () {
   const DOC_ALLOWED_EXTENSIONS = new Set(["docx", "hwp", "pdf"]);
   const DOC_MAX_FILE_SIZE = 10 * 1024 * 1024;
-  const DOC_MAX_FILES_PER_TYPE = 5;
+  const DOC_MAX_FILES_PER_UPLOAD = 5;
 
   function showModal(modal) {
     if (!modal) return;
@@ -15,6 +15,65 @@
     modal.classList.add("hidden");
     modal.classList.remove("flex");
     document.body.classList.remove("overflow-hidden");
+  }
+
+  function getAlertRoot() {
+    return document.getElementById("app-alert-root");
+  }
+
+  function getAlertTemplate() {
+    return document.getElementById("app-alert-template");
+  }
+
+  function applyAlertStyles(alertNode, iconNode, level) {
+    const levelMap = {
+      success: {
+        alert: ["border-emerald-200", "bg-emerald-50", "text-emerald-800"],
+        icon: ["bg-emerald-100", "text-emerald-700"],
+      },
+      error: {
+        alert: ["border-red-200", "bg-red-50", "text-red-800"],
+        icon: ["bg-red-100", "text-red-700"],
+      },
+      warning: {
+        alert: ["border-amber-200", "bg-amber-50", "text-amber-800"],
+        icon: ["bg-amber-100", "text-amber-700"],
+      },
+      info: {
+        alert: ["border-blue-200", "bg-blue-50", "text-blue-800"],
+        icon: ["bg-blue-100", "text-blue-700"],
+      },
+    };
+    const resolvedLevel = levelMap[level] ? level : "info";
+    alertNode.classList.add(...levelMap[resolvedLevel].alert);
+    iconNode.classList.add(...levelMap[resolvedLevel].icon);
+  }
+
+  function dismissAppAlert(alertNode) {
+    if (!alertNode) return;
+    alertNode.remove();
+  }
+
+  function showAppAlert(message, level = "info") {
+    const root = getAlertRoot();
+    const template = getAlertTemplate();
+    if (!root || !template) {
+      window.alert(message);
+      return;
+    }
+
+    const alertNode = template.content.firstElementChild.cloneNode(true);
+    const messageNode = alertNode.querySelector("[data-alert-message]");
+    const iconNode = alertNode.querySelector("[data-alert-icon]");
+    if (messageNode) {
+      messageNode.textContent = message;
+    }
+    if (iconNode) {
+      applyAlertStyles(alertNode, iconNode, level);
+    }
+
+    root.appendChild(alertNode);
+    window.setTimeout(() => dismissAppAlert(alertNode), 4000);
   }
 
   function toggleSidebar() {
@@ -188,7 +247,7 @@
       .filter(Boolean);
 
     if (selectedRows.length === 0) {
-      window.alert("추가할 사용자를 선택하세요.");
+      showAppAlert("추가할 사용자를 선택하세요.", "warning");
       return;
     }
 
@@ -210,7 +269,7 @@
     });
 
     if (duplicated) {
-      window.alert("이미 추가된 사용자가 포함되어 있습니다.");
+      showAppAlert("이미 추가된 사용자가 포함되어 있습니다.", "warning");
     }
 
     if (addedCount > 0) {
@@ -236,6 +295,16 @@
 
   function getDocList(section) {
     return document.querySelector(`[data-doc-file-list="${section}"]`);
+  }
+
+  function getTotalDocFileCount(nextSection = null, nextLength = null) {
+    const sections = ["rfp", "meeting"];
+    return sections.reduce((total, section) => {
+      if (section === nextSection && nextLength !== null) {
+        return total + nextLength;
+      }
+      return total + docStore[section].files.length;
+    }, 0);
   }
 
   function fileKey(file) {
@@ -303,18 +372,18 @@
     for (const file of Array.from(fileList)) {
       const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
       if (!DOC_ALLOWED_EXTENSIONS.has(extension)) {
-        window.alert("docx, hwp, pdf 파일만 업로드할 수 있습니다.");
+        showAppAlert("docx, hwp, pdf 파일만 업로드할 수 있습니다.", "error");
         continue;
       }
       if (file.size > DOC_MAX_FILE_SIZE) {
-        window.alert("각 파일은 10MB 이하만 업로드할 수 있습니다.");
+        showAppAlert("각 파일은 10MB 이하만 업로드할 수 있습니다.", "error");
         continue;
       }
       if (seen.has(fileKey(file))) {
         continue;
       }
-      if (nextFiles.length >= DOC_MAX_FILES_PER_TYPE) {
-        window.alert("각 섹션에는 최대 5개 파일만 첨부할 수 있습니다.");
+      if (getTotalDocFileCount(section, nextFiles.length) >= DOC_MAX_FILES_PER_UPLOAD) {
+        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지 등록할 수 있습니다.`, "warning");
         break;
       }
 
@@ -359,7 +428,7 @@
 
     const checked = form.querySelectorAll('[data-docs-item-checkbox]:checked');
     if (checked.length === 0) {
-      window.alert("파일을 하나 이상 선택하세요.");
+      showAppAlert("파일을 하나 이상 선택하세요.", "warning");
       return false;
     }
 
@@ -408,6 +477,12 @@
       populateUserDetail(userDetailRow);
     }
 
+    const alertDismissButton = event.target.closest("[data-alert-dismiss]");
+    if (alertDismissButton) {
+      dismissAppAlert(alertDismissButton.closest("[data-app-alert]"));
+      return;
+    }
+
     const openTrigger = event.target.closest("[data-modal-target]");
     if (openTrigger) {
       showModal(document.getElementById(openTrigger.dataset.modalTarget));
@@ -453,7 +528,6 @@
     const docInput = event.target.closest("[data-doc-file-input]");
     if (docInput) {
       addDocFiles(docInput.dataset.docFileInput, docInput.files);
-      docInput.value = "";
       return;
     }
 
@@ -488,9 +562,18 @@
   document.addEventListener("submit", function (event) {
     const docUploadForm = event.target.closest("[data-doc-upload-form]");
     if (docUploadForm) {
-      const totalFiles = docStore.rfp.files.length + docStore.meeting.files.length;
+      syncDocInput("rfp");
+      syncDocInput("meeting");
+
+      const totalFiles = getTotalDocFileCount();
       if (totalFiles === 0) {
-        window.alert("업로드할 파일을 선택하세요.");
+        showAppAlert("업로드할 파일을 선택하세요.", "warning");
+        event.preventDefault();
+        return;
+      }
+
+      if (totalFiles > DOC_MAX_FILES_PER_UPLOAD) {
+        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지 등록할 수 있습니다.`, "warning");
         event.preventDefault();
       }
       return;
@@ -510,7 +593,7 @@
     const projectNameField = form.querySelector("#project-name");
     const projectName = projectNameField ? projectNameField.value.trim() : "";
     if (!projectName) {
-      window.alert("프로젝트명을 입력하세요.");
+      showAppAlert("프로젝트명을 입력하세요.", "warning");
       event.preventDefault();
       return;
     }
@@ -518,7 +601,7 @@
     const managerIds = getProjectRoleInput("manager")?.value.trim() || "";
     const memberIds = getProjectRoleInput("member")?.value.trim() || "";
     if (!managerIds && !memberIds) {
-      window.alert("최소 1명의 사용자를 추가해야 합니다.");
+      showAppAlert("최소 1명의 사용자를 추가해야 합니다.", "warning");
       event.preventDefault();
       return;
     }

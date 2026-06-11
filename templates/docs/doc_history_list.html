@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} | ALPLED{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <section class="space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-900">{{ title }}</h1>
+        {% if current_project %}
+          <p class="mt-1 text-sm text-slate-500">{{ current_project.name }}</p>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+    <div class="border-t-2 border-slate-900">
+      {% if current_project and has_documents %}
+        <div class="overflow-x-auto">
+          <table class="min-w-full table-fixed text-left text-sm">
+            <thead class="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <tr>
+                <th class="px-6 py-4 text-center">산출물 구분</th>
+                <th class="px-6 py-4 text-center">이름</th>
+                <th class="px-6 py-4 text-center">버전</th>
+                <th class="px-6 py-4 text-center">수정내용</th>
+                <th class="px-6 py-4 text-center">등록일시</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-200 text-slate-700">
+              {% for document in documents %}
+                <tr class="bg-white transition hover:bg-slate-50">
+                  <td class="px-6 py-4 text-center">{{ document.type_name }}</td>
+                  <td class="px-6 py-4 text-center">{{ document.creator_name }}</td>
+                  <td class="px-6 py-4 text-center">{{ document.version }}</td>
+                  <td class="px-6 py-4 text-center">{{ document.modification_content }}</td>
+                  <td class="px-6 py-4 text-center">{{ document.created_at|date:"Y-m-d H:i" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="px-8 py-10 text-sm text-slate-700">
+          {% if current_project %}
+            <p class="font-semibold">등록된 산출물이 없습니다.</p>
+          {% else %}
+            <p class="font-semibold">선택 가능한 프로젝트가 없습니다.</p>
+            <p class="mt-1">프로젝트를 먼저 생성하거나 현재 프로젝트를 선택해주세요.</p>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

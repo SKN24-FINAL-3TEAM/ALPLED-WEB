@@ -52,12 +52,36 @@
         <span>프로젝트 관리</span>
       </a>
 
-      <a href="{% url 'doc_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'docs' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+      <a href="{% url 'file_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'files' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
         <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M5 3.8h6.8L15 7v9.2A1.8 1.8 0 0 1 13.2 18H5.8A1.8 1.8 0 0 1 4 16.2V5.6A1.8 1.8 0 0 1 5.8 3.8H5Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
           <path d="M11.8 3.8V7H15" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
         </svg>
-        <span>문서 관리</span>
+        <span>파일 관리</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_SRS" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_SRS' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>사용자 요구사항 정의서</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_ITF" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_ITF' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>사용자 인터페이스 설계서</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_ARCH" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_ARCH' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>아키텍처 설계서</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_ERD" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_ERD' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>엔티티 관계 모형 설계서</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_DB" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_DB' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>데이터베이스 설계서</span>
+      </a>
+
+      <a href="{% url 'doc_history_list' %}?docs_cd=DOC_TS" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_TS' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+        <span>통합 시험 시나리오</span>
       </a>
     </nav>
 

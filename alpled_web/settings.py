@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'common.apps.CommonConfig',
     'users.apps.UsersConfig',
     'projects.apps.ProjectsConfig',
-    'docs',
+    'docs.apps.DocsConfig',
+    'files.apps.FilesConfig',
 ]
 
 MIDDLEWARE = [
