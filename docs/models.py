@@ -25,6 +25,8 @@ class Document(CreatedAtMixin, CreatedByMixin, UpdatedAtMixin, UpdatedByMixin):
         db_column="user_sn",
         related_name="documents",
         db_constraint=False,
+        null=True,
+        blank=True,
     )
     document_type = models.ForeignKey(
         "common.Code",
@@ -84,7 +86,12 @@ class DocumentApproval(CreatedAtMixin, CreatedByMixin, UpdatedAtMixin, UpdatedBy
         db_constraint=False,
     )
     request_content = models.CharField(max_length=100, db_column="dmnd_cn")
-    rejection_reason = models.CharField(max_length=100, db_column="rjct_rsn")
+    rejection_reason = models.CharField(
+        max_length=100,
+        db_column="rjct_rsn",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         db_table = "tbl_docs_approve"

@@ -25,6 +25,22 @@
     return document.getElementById("app-alert-template");
   }
 
+  function getConfirmRoot() {
+    return document.getElementById("app-confirm-root");
+  }
+
+  function getConfirmTitle() {
+    return document.querySelector("[data-confirm-title]");
+  }
+
+  function getConfirmMessage() {
+    return document.querySelector("[data-confirm-message]");
+  }
+
+  function getConfirmSubmitButton() {
+    return document.querySelector("[data-confirm-submit]");
+  }
+
   function applyAlertStyles(alertNode, iconNode, level) {
     const levelMap = {
       success: {
@@ -58,7 +74,11 @@
     const root = getAlertRoot();
     const template = getAlertTemplate();
     if (!root || !template) {
-      window.alert(message);
+      const fallback = document.createElement("div");
+      fallback.className = "fixed right-4 top-4 z-[60] rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-lg";
+      fallback.textContent = message;
+      document.body.appendChild(fallback);
+      window.setTimeout(() => fallback.remove(), 4000);
       return;
     }
 
@@ -74,6 +94,69 @@
 
     root.appendChild(alertNode);
     window.setTimeout(() => dismissAppAlert(alertNode), 4000);
+  }
+
+  let confirmResolver = null;
+
+  function setConfirmTone(button, tone) {
+    if (!button) return;
+    button.className = "rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition";
+    if (tone === "danger") {
+      button.classList.add("bg-rose-600", "hover:bg-rose-700");
+      return;
+    }
+    button.classList.add("bg-blue-600", "hover:bg-blue-700");
+  }
+
+  function resolveConfirm(result) {
+    if (!confirmResolver) return;
+    const resolver = confirmResolver;
+    confirmResolver = null;
+    hideModal(getConfirmRoot());
+    resolver(result);
+  }
+
+  function showConfirmDialog({
+    title = "확인",
+    message = "",
+    confirmText = "확인",
+    cancelText = "취소",
+    tone = "primary",
+  }) {
+    const root = getConfirmRoot();
+    const titleNode = getConfirmTitle();
+    const messageNode = getConfirmMessage();
+    const submitButton = getConfirmSubmitButton();
+    const cancelButton = root?.querySelector("[data-confirm-cancel]");
+    if (!root || !titleNode || !messageNode || !submitButton || !cancelButton) {
+      return Promise.resolve(true);
+    }
+
+    titleNode.textContent = title;
+    messageNode.textContent = message;
+    submitButton.textContent = confirmText;
+    cancelButton.textContent = cancelText;
+    setConfirmTone(submitButton, tone);
+    showModal(root);
+
+    return new Promise((resolve) => {
+      confirmResolver = resolve;
+      submitButton.focus();
+    });
+  }
+
+  function resubmitForm(form, submitter) {
+    if (!form) return;
+    form.dataset.skipConfirm = "true";
+    if (submitter && typeof form.requestSubmit === "function") {
+      form.requestSubmit(submitter);
+      return;
+    }
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+      return;
+    }
+    form.submit();
   }
 
   function toggleSidebar() {
@@ -96,10 +179,6 @@
     setValue("#user-detail-department", row.dataset.userDepartment);
     setValue("#user-detail-position", row.dataset.userPosition);
     setValue("#user-detail-active", row.dataset.userUseYn);
-  }
-
-  function getProjectCreateModal() {
-    return document.getElementById("project-create-modal");
   }
 
   function getProjectSearchModal() {
@@ -247,7 +326,7 @@
       .filter(Boolean);
 
     if (selectedRows.length === 0) {
-      showAppAlert("추가할 사용자를 선택하세요.", "warning");
+      showAppAlert("추가할 사용자를 선택해 주세요.", "warning");
       return;
     }
 
@@ -321,7 +400,7 @@
     if (files.length === 0) {
       const empty = document.createElement("div");
       empty.className = "rounded-xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-500";
-      empty.textContent = "선택된 파일이 없습니다.";
+      empty.textContent = "선택한 파일이 없습니다.";
       list.appendChild(empty);
       return;
     }
@@ -383,7 +462,7 @@
         continue;
       }
       if (getTotalDocFileCount(section, nextFiles.length) >= DOC_MAX_FILES_PER_UPLOAD) {
-        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지 등록할 수 있습니다.`, "warning");
+        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지만 등록할 수 있습니다.`, "warning");
         break;
       }
 
@@ -424,19 +503,12 @@
 
   function handleDocAction(button) {
     const form = button.closest("form");
-    if (!form) return true;
+    if (!form) return false;
 
     const checked = form.querySelectorAll('[data-docs-item-checkbox]:checked');
     if (checked.length === 0) {
-      showAppAlert("파일을 하나 이상 선택하세요.", "warning");
+      showAppAlert("파일을 하나 이상 선택해 주세요.", "warning");
       return false;
-    }
-
-    if (button.dataset.docsAction === "download") {
-      return window.confirm("다운로드하시겠습니까?");
-    }
-    if (button.dataset.docsAction === "delete") {
-      return window.confirm("삭제하시겠습니까?");
     }
 
     return true;
@@ -447,6 +519,110 @@
     if (!form) return;
     form.querySelectorAll("[data-docs-item-checkbox]").forEach((checkbox) => {
       checkbox.checked = trigger.checked;
+    });
+  }
+
+  let onlyOfficeScriptPromise = null;
+
+  function loadScriptOnce(src) {
+    if (onlyOfficeScriptPromise) return onlyOfficeScriptPromise;
+
+    onlyOfficeScriptPromise = new Promise((resolve, reject) => {
+      const existing = document.querySelector(`script[src="${src}"]`);
+      if (existing) {
+        existing.addEventListener("load", () => resolve(), { once: true });
+        existing.addEventListener("error", () => reject(new Error("failed to load script")), { once: true });
+        if (existing.dataset.loaded === "true") {
+          resolve();
+        }
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = true;
+      script.addEventListener("load", function () {
+        script.dataset.loaded = "true";
+        resolve();
+      }, { once: true });
+      script.addEventListener("error", function () {
+        reject(new Error("failed to load script"));
+      }, { once: true });
+      document.head.appendChild(script);
+    });
+
+    return onlyOfficeScriptPromise;
+  }
+
+  function appendGenerationMessage(messagesNode, text) {
+    const message = document.createElement("div");
+    message.className = "max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm";
+    message.textContent = text;
+    messagesNode.appendChild(message);
+  }
+
+  function startGenerationSequence() {
+    const root = document.querySelector("[data-doc-generation-root]");
+    if (!root || root.dataset.initialized === "true") return;
+
+    const rawSteps = root.dataset.docGenerationSteps || "";
+    const steps = rawSteps.split("||").map((value) => value.trim()).filter(Boolean);
+    const messagesNode = root.querySelector("[data-doc-generation-messages]");
+    const completeNode = root.querySelector("[data-doc-generation-complete]");
+    if (!messagesNode || steps.length === 0) return;
+
+    root.dataset.initialized = "true";
+    let index = 0;
+
+    const runStep = function () {
+      appendGenerationMessage(messagesNode, steps[index]);
+      index += 1;
+      if (index < steps.length) {
+        window.setTimeout(runStep, 1000);
+      } else if (completeNode) {
+        completeNode.classList.remove("hidden");
+      }
+    };
+
+    runStep();
+  }
+
+  async function initOnlyOfficeEditor(root) {
+    const configUrl = root.dataset.configUrl;
+    const documentServerUrl = root.dataset.documentServerUrl;
+    if (!configUrl) return;
+
+    if (!documentServerUrl) {
+      root.innerHTML = '<div class="flex h-[640px] items-center justify-center text-sm text-slate-500">OnlyOffice 서버 주소가 설정되지 않았습니다.</div>';
+      return;
+    }
+
+    try {
+      const response = await window.fetch(configUrl, { credentials: "same-origin" });
+      if (!response.ok) {
+        throw new Error(`config request failed: ${response.status}`);
+      }
+      const config = await response.json();
+
+      await loadScriptOnce(`${documentServerUrl}/web-apps/apps/api/documents/api.js`);
+      if (!(window.DocsAPI && window.DocsAPI.DocEditor)) {
+        throw new Error("DocsAPI unavailable");
+      }
+
+      const holder = document.createElement("div");
+      holder.id = `onlyoffice-${Math.random().toString(36).slice(2)}`;
+      holder.className = "h-[640px] w-full";
+      root.innerHTML = "";
+      root.appendChild(holder);
+      new window.DocsAPI.DocEditor(holder.id, config);
+    } catch (error) {
+      root.innerHTML = '<div class="flex h-[640px] items-center justify-center px-6 text-center text-sm text-slate-500">OnlyOffice 편집기를 불러오지 못했습니다. 환경 변수와 Docker 상태를 확인해 주세요.</div>';
+    }
+  }
+
+  function initOnlyOfficeEditors() {
+    document.querySelectorAll("[data-onlyoffice-root]").forEach((root) => {
+      initOnlyOfficeEditor(root);
     });
   }
 
@@ -483,6 +659,18 @@
       return;
     }
 
+    const confirmSubmit = event.target.closest("[data-confirm-submit]");
+    if (confirmSubmit) {
+      resolveConfirm(true);
+      return;
+    }
+
+    const confirmCancel = event.target.closest("[data-confirm-cancel]");
+    if (confirmCancel) {
+      resolveConfirm(false);
+      return;
+    }
+
     const openTrigger = event.target.closest("[data-modal-target]");
     if (openTrigger) {
       showModal(document.getElementById(openTrigger.dataset.modalTarget));
@@ -491,7 +679,12 @@
 
     const closeTrigger = event.target.closest("[data-modal-hide]");
     if (closeTrigger) {
-      hideModal(document.getElementById(closeTrigger.dataset.modalHide));
+      const modal = document.getElementById(closeTrigger.dataset.modalHide);
+      if (modal?.dataset.confirmRoot !== undefined) {
+        resolveConfirm(false);
+        return;
+      }
+      hideModal(modal);
       return;
     }
 
@@ -508,6 +701,10 @@
     }
 
     if (event.target.matches("[data-modal-root]")) {
+      if (event.target.dataset.confirmRoot !== undefined) {
+        resolveConfirm(false);
+        return;
+      }
       hideModal(event.target);
       return;
     }
@@ -559,7 +756,13 @@
     addDocFiles(zone.dataset.docDropZone, event.dataTransfer?.files);
   });
 
-  document.addEventListener("submit", function (event) {
+  document.addEventListener("submit", async function (event) {
+    const form = event.target;
+    if (form?.dataset?.skipConfirm === "true") {
+      delete form.dataset.skipConfirm;
+      return;
+    }
+
     const docUploadForm = event.target.closest("[data-doc-upload-form]");
     if (docUploadForm) {
       syncDocInput("rfp");
@@ -567,33 +770,49 @@
 
       const totalFiles = getTotalDocFileCount();
       if (totalFiles === 0) {
-        showAppAlert("업로드할 파일을 선택하세요.", "warning");
+        showAppAlert("업로드할 파일을 선택해 주세요.", "warning");
         event.preventDefault();
         return;
       }
 
       if (totalFiles > DOC_MAX_FILES_PER_UPLOAD) {
-        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지 등록할 수 있습니다.`, "warning");
+        showAppAlert(`한 번에 최대 ${DOC_MAX_FILES_PER_UPLOAD}개 파일까지만 등록할 수 있습니다.`, "warning");
         event.preventDefault();
       }
       return;
     }
 
     const docActionButton = event.submitter?.closest?.("[data-docs-action]");
-    if (docActionButton && !handleDocAction(docActionButton)) {
+    if (docActionButton) {
+      if (!handleDocAction(docActionButton)) {
+        event.preventDefault();
+        return;
+      }
+
       event.preventDefault();
+      const confirmed = await showConfirmDialog({
+        title: docActionButton.dataset.docsAction === "delete" ? "삭제 확인" : "다운로드 확인",
+        message: docActionButton.dataset.docsAction === "delete"
+          ? "선택한 파일을 삭제하시겠습니까?"
+          : "선택한 파일을 다운로드하시겠습니까?",
+        confirmText: docActionButton.dataset.docsAction === "delete" ? "삭제" : "다운로드",
+        tone: docActionButton.dataset.docsAction === "delete" ? "danger" : "primary",
+      });
+      if (confirmed) {
+        resubmitForm(docActionButton.closest("form"), event.submitter);
+      }
       return;
     }
 
-    const form = event.target.closest("[data-project-create-form]");
-    if (!form) return;
+    const projectForm = event.target.closest("[data-project-create-form]");
+    if (!projectForm) return;
 
     syncAllProjectRoles();
 
-    const projectNameField = form.querySelector("#project-name");
+    const projectNameField = projectForm.querySelector("#project-name");
     const projectName = projectNameField ? projectNameField.value.trim() : "";
     if (!projectName) {
-      showAppAlert("프로젝트명을 입력하세요.", "warning");
+      showAppAlert("프로젝트명을 입력해 주세요.", "warning");
       event.preventDefault();
       return;
     }
@@ -606,13 +825,25 @@
       return;
     }
 
-    if (!window.confirm("프로젝트를 등록하시겠습니까?")) {
-      event.preventDefault();
+    event.preventDefault();
+    const confirmed = await showConfirmDialog({
+      title: "프로젝트 등록",
+      message: "프로젝트를 등록하시겠습니까?",
+      confirmText: "등록",
+      tone: "primary",
+    });
+    if (confirmed) {
+      resubmitForm(projectForm, event.submitter);
     }
   });
 
   document.addEventListener("keydown", function (event) {
     if (event.key !== "Escape") return;
+    const confirmRoot = getConfirmRoot();
+    if (confirmRoot?.classList.contains("flex")) {
+      resolveConfirm(false);
+      return;
+    }
     document.querySelectorAll("[data-modal-root].flex").forEach(hideModal);
   });
 
@@ -626,6 +857,12 @@
     showModal(document.getElementById("user-create-modal"));
   }
 
+  if (document.querySelector("[data-modal-root].flex")) {
+    document.body.classList.add("overflow-hidden");
+  }
+
   syncAllProjectRoles();
   prepareDocUploadUI();
+  startGenerationSequence();
+  initOnlyOfficeEditors();
 })();

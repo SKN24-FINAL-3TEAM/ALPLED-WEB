@@ -17,23 +17,23 @@
         <div class="flex items-center gap-3">
           <label class="text-sm font-semibold text-slate-700" for="file_type">문서 구분</label>
           <select id="file_type" name="file_type" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <option value="all" {% if file_type == "all" %}selected{% endif %}>전체</option>
-            <option value="RFP" {% if file_type == "RFP" %}selected{% endif %}>RFP</option>
-            <option value="MEETING" {% if file_type == "MEETING" %}selected{% endif %}>회의록</option>
+            {% for value, label in file_type_choices %}
+              <option value="{{ value }}" {% if file_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
           </select>
         </div>
 
         <div class="flex items-center gap-3">
           <label class="text-sm font-semibold text-slate-700" for="field">검색 조건</label>
           <select id="field" name="field" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-            <option value="all" {% if search_field == "all" %}selected{% endif %}>전체</option>
-            <option value="creator" {% if search_field == "creator" %}selected{% endif %}>등록자</option>
-            <option value="name" {% if search_field == "name" %}selected{% endif %}>문서명</option>
+            {% for value, label in search_field_choices %}
+              <option value="{{ value }}" {% if search_field == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
           </select>
         </div>
 
         <div>
-          <input type="text" name="q" value="{{ query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="검색어를 입력하세요">
+          <input type="text" name="q" value="{{ query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="검색어를 입력해 주세요.">
         </div>
 
         <div class="flex justify-end">
@@ -68,40 +68,7 @@
       </div>
 
       <div class="overflow-x-auto">
-        <table class="min-w-full text-left text-sm">
-          <thead class="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-600">
-            <tr>
-              <th class="px-4 py-4 text-center font-semibold">
-                <input type="checkbox" data-docs-select-all class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-              </th>
-              <th class="px-6 py-4 text-center font-semibold">문서번호</th>
-              <th class="px-6 py-4 text-center font-semibold">문서명</th>
-              <th class="px-6 py-4 text-center font-semibold">구분</th>
-              <th class="px-6 py-4 text-center font-semibold">등록자</th>
-              <th class="px-6 py-4 text-center font-semibold">등록일자</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-200 text-slate-700">
-            {% for document in documents %}
-              <tr class="bg-white transition hover:bg-slate-50">
-                <td class="px-4 py-4 text-center">
-                  <input type="checkbox" name="selected_files" value="{{ document.sn }}" data-docs-item-checkbox class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
-                </td>
-                <td class="px-6 py-4 text-center font-medium text-slate-900">{{ document.display_no }}</td>
-                <td class="px-6 py-4 text-center">{{ document.name }}</td>
-                <td class="px-6 py-4 text-center">{{ document.type_name }}</td>
-                <td class="px-6 py-4 text-center">{{ document.creator_name }}</td>
-                <td class="px-6 py-4 text-center">{{ document.created_at|date:"Y-m-d H:i" }}</td>
-              </tr>
-            {% empty %}
-              <tr>
-                <td colspan="6" class="px-6 py-20 text-center text-sm text-slate-500">
-                  {% if current_project %}등록된 문서가 없습니다.{% else %}선택 가능한 프로젝트가 없습니다.{% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        {% include "files/partials/file_selector_table.html" with documents=documents current_project=current_project %}
       </div>
     </form>
   </section>

@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}{{ title }} | ALPLED{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <section class="space-y-4">
+    <div>
+      <h1 class="text-3xl font-bold text-slate-900">{{ title }}</h1>
+      <p class="mt-2 text-sm text-slate-500">{{ current_project.name }}</p>
+    </div>
+  </section>
+
+  <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+    <div class="mx-auto grid max-w-6xl gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div class="space-y-4">
+        <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+          사용자 요구사항 정의서 생성을 위해 제안요청서(RFP) 혹은 회의록이 필요합니다.<br>
+          문서관리탭에서 업로드 후 불러와 주세요.
+        </div>
+
+        <div class="pl-1">
+          <button type="button" data-modal-target="docs-generate-files-modal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+            {% if has_selected_files %}문서 다시 선택{% else %}문서 불러오기{% endif %}
+          </button>
+        </div>
+
+        {% if has_selected_files %}
+          <div class="max-w-3xl rounded-[1.75rem] border border-slate-200 bg-slate-100/90 px-5 py-5 shadow-inner">
+            <p class="mb-4 text-sm font-semibold text-slate-900">선택 문서</p>
+            <div class="space-y-3">
+              {% for selected_file in selected_files %}
+                <div class="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                  <div class="min-w-0">
+                    <p class="truncate text-sm font-medium text-slate-900">{{ selected_file.name }}</p>
+                    <p class="mt-1 text-xs text-slate-500">{{ selected_file.file_type.name }}</p>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
+        {% if has_selected_files and current_document_code and not current_draft %}
+          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            선택한 파일을 바탕으로 {{ current_document_label }} 생성을 시작할 수 있습니다.
+          </div>
+          <div class="pl-1">
+            <form method="post" class="inline-flex">
+              {% csrf_token %}
+              {% for selected_file in selected_files %}
+                <input type="hidden" name="selected_files" value="{{ selected_file.sn }}">
+              {% endfor %}
+              <input type="hidden" name="docs_cd" value="{{ current_document_code }}">
+              <input type="hidden" name="action" value="start_current">
+              <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700">
+                {{ current_document_label }} 생성
+              </button>
+            </form>
+          </div>
+        {% endif %}
+
+        {% if show_generation_sequence %}
+          <div
+            data-doc-generation-root
+            data-doc-generation-steps="{{ generation_steps|join:'||' }}"
+            class="space-y-4"
+          >
+            <div class="space-y-4" data-doc-generation-messages></div>
+            <div class="hidden space-y-4" data-doc-generation-complete>
+              <div class="max-w-3xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+                {{ current_document_label }} 초안이 생성되었습니다.<br>
+                내용을 확인하고 수정할 수 있습니다.<br>
+                초안을 확정하면 다음 단계 산출물 생성으로 이어서 진행됩니다.
+              </div>
+              <div class="pl-1">
+                <a href="{{ current_check_url }}" class="inline-flex rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                  {{ current_document_label }} 확인
+                </a>
+              </div>
+            </div>
+          </div>
+        {% endif %}
+
+        {% if current_draft and not show_generation_sequence %}
+          <div class="max-w-3xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            {{ current_document_label }} 초안이 준비되었습니다.<br>
+            내용을 확인하고 수정하거나 바로 파일 확정을 진행할 수 있습니다.
+          </div>
+          <div class="pl-1">
+            <a href="{{ current_check_url }}" class="inline-flex rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+              {{ current_document_label }} 확인
+            </a>
+          </div>
+        {% endif %}
+
+        {% if is_complete %}
+          <div class="max-w-3xl rounded-[1.5rem] border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm leading-7 text-emerald-900 shadow-sm">
+            모든 산출물의 버전 1 확정본 생성이 완료되었습니다.
+          </div>
+        {% endif %}
+      </div>
+
+      <aside class="xl:sticky xl:top-24 xl:self-start">
+        <div class="rounded-[1.5rem] border border-slate-200 bg-slate-50 px-5 py-4 shadow-sm">
+          <div class="flex items-center justify-between">
+            <p class="text-sm font-semibold text-slate-900">생성 진행 현황</p>
+            <span class="text-xs text-slate-500">{{ progress_rows|length }} 단계</span>
+          </div>
+          <div class="mt-4 space-y-3">
+            {% for row in progress_rows %}
+              <div class="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p class="text-sm font-medium text-slate-900">{{ row.label }}</p>
+                {% if row.status == "confirmed" %}
+                  <span class="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">{{ row.status_label }}</span>
+                {% elif row.status == "review" %}
+                  <span class="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">{{ row.status_label }}</span>
+                {% elif row.status == "pending" %}
+                  <span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">{{ row.status_label }}</span>
+                {% else %}
+                  <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{{ row.status_label }}</span>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+</div>
+
+<div id="docs-generate-files-modal" data-modal-root class="fixed inset-0 z-50 {% if open_file_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
+  <div class="relative w-full max-w-6xl">
+    <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">문서 불러오기</h3>
+          <p class="mt-1 text-sm text-slate-500">현재 프로젝트에 등록된 RFP 또는 회의록 문서를 선택해 주세요.</p>
+        </div>
+        <button type="button" data-modal-hide="docs-generate-files-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <span class="text-3xl leading-none">&times;</span>
+        </button>
+      </div>
+      <div class="max-h-[85vh] overflow-y-auto px-6 py-6">
+        <form method="get" class="space-y-4">
+          <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+          <input type="hidden" name="modal" value="files">
+          <input type="hidden" name="resume" value="1">
+          <div class="grid gap-3 lg:grid-cols-[auto_auto_minmax(0,1fr)_auto] lg:items-center">
+            <div class="flex items-center gap-3">
+              <label class="text-sm font-semibold text-slate-700" for="file_type">문서 구분</label>
+              <select id="file_type" name="file_type" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                {% for value, label in file_type_choices %}
+                  <option value="{{ value }}" {% if file_type == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="flex items-center gap-3">
+              <label class="text-sm font-semibold text-slate-700" for="field">검색 조건</label>
+              <select id="field" name="field" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                {% for value, label in search_field_choices %}
+                  <option value="{{ value }}" {% if search_field == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <input type="text" name="q" value="{{ query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="검색어를 입력해 주세요.">
+            </div>
+            <button type="submit" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+              검색
+            </button>
+          </div>
+
+          {% include "files/partials/file_selector_table.html" with documents=documents current_project=current_project selected_file_ids=selected_file_ids %}
+
+          <div class="flex justify-end border-t border-slate-200 pt-4">
+            <button type="submit" name="apply_selection" value="1" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+              선택 완료
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
