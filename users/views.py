@@ -1,16 +1,59 @@
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Max, Q
 from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
 
 from common.signals import ensure_initial_reference_data
 from common.models import YesNoChoices
+from common.project_selection import get_safe_next_url
 from projects.models import ProjectUserRole
 
 from .models import User
 
 
 TEMP_PASSWORD = "abc1234"
+
+
+def login_view(request):
+    ensure_initial_reference_data()
+
+    if request.user.is_authenticated:
+        return redirect("user_list")
+
+    if request.method == "POST":
+        user_id = request.POST.get("user_id", "").strip()
+        password = request.POST.get("password", "")
+
+        if not user_id or not password:
+            messages.error(request, "아이디와 비밀번호를 입력해 주세요.")
+        else:
+            user = authenticate(request, user_id=user_id, password=password)
+            if user is not None and user.is_active:
+                login(request, user)
+                next_url = get_safe_next_url(request)
+                if next_url in {"", "/", reverse("home"), reverse("login")}:
+                    next_url = reverse("user_list")
+                return redirect(next_url)
+            messages.error(request, "아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    return render(
+        request,
+        "users/login.html",
+        {
+            "title": "로그인",
+            "next_url": request.POST.get("next") or request.GET.get("next") or "",
+        },
+    )
+
+
+@require_POST
+def logout_view(request):
+    logout(request)
+    return redirect("home")
 
 
 def _demo_users():
@@ -85,6 +128,7 @@ def _create_user(request):
     return True, _build_create_form_data()
 
 
+@login_required(login_url="home")
 def user_list(request):
     ensure_initial_reference_data()
     create_form = _build_create_form_data()

@@ -1,3 +1,4 @@
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Max, Q
@@ -153,6 +154,7 @@ def _create_project(request):
     return True
 
 
+@login_required(login_url="home")
 def project_list(request):
     ensure_initial_reference_data()
 

@@ -12,7 +12,7 @@ class DocumentWorkflowViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.filter(user_id="admin").first()
         if self.user is None:
-            self.user = User.objects.create(
+            self.user = User.objects.create_user(
                 sn=1,
                 user_id="admin",
                 password="abc1234",
@@ -20,6 +20,10 @@ class DocumentWorkflowViewTests(TestCase):
                 sys_mngr_yn="Y",
                 use_yn="Y",
             )
+        else:
+            self.user.set_password("abc1234")
+            self.user.save(update_fields=["password"])
+        self.client.force_login(self.user)
 
         self.role_manager, _ = Code.objects.get_or_create(
             code="ROLE_MANAGER",
@@ -114,6 +118,18 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_document_code"], "DOC_ITF")
         self.assertTrue(response.context["can_generate"])
+
+    def test_history_list_excludes_version_zero_and_keeps_latest_duplicate_version(self):
+        self._create_document(sn=1, version="1.0", document_type=self.srs_code)
+        newer = self._create_document(sn=2, version="1.0", document_type=self.srs_code)
+        self._create_document(sn=3, version="0", document_type=self.srs_code)
+
+        response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_SRS"})
+
+        self.assertEqual(response.status_code, 200)
+        documents = response.context["documents"]
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["sn"], newer.sn)
 
     def test_generate_view_initially_shows_only_file_load_ui(self):
         response = self.client.get(reverse("doc_generate"))
@@ -227,6 +243,27 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(DocumentDetail.objects.filter(document=document).count(), 2)
         document.refresh_from_db()
         self.assertIsNone(document.user)
+
+    def test_document_download_uses_shared_document_title_helper(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        self._create_detail(sn=1, document=document, content=b"docx-binary")
+
+        response = self.client.get(f"{reverse('doc_content', args=[document.sn])}?download=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('filename="DOC_SRS_v1.0.docx"', response["Content-Disposition"])
+
+    def test_history_preview_link_preserves_edit_mode_and_restore_button(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
+
+        self.assertEqual(response.status_code, 200)
+        preview_url = response.context["revision_rows"][0]["preview_url"]
+        self.assertIn("preview_detail=1", preview_url)
+        self.assertIn("mode=edit", preview_url)
+        self.assertIn("modal=history", preview_url)
 
     def test_document_callback_saves_onlyoffice_revision(self):
         document = self._create_document(sn=1, version="0", user=None)

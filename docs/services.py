@@ -5,7 +5,8 @@ from urllib.request import urlopen
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import Max
+from django.db.models import F, Max, Window
+from django.db.models.functions import RowNumber
 from django.urls import reverse
 from docx import Document as DocxDocument
 
@@ -181,6 +182,26 @@ def latest_confirmed_document(project, document_code):
         .select_related("document_type", "created_by", "user")
         .order_by("-created_at", "-sn")
         .first()
+    )
+
+
+def get_document_history_queryset(project, document_code):
+    if project is None:
+        return Document.objects.none()
+
+    return (
+        Document.objects.filter(project=project, document_type_id=document_code)
+        .exclude(version="0")
+        .annotate(
+            version_rank=Window(
+                expression=RowNumber(),
+                partition_by=[F("document_type_id"), F("version")],
+                order_by=[F("created_at").desc(), F("sn").desc()],
+            )
+        )
+        .filter(version_rank=1)
+        .select_related("document_type", "created_by", "user")
+        .order_by("-created_at", "-sn")
     )
 
 
@@ -548,10 +569,13 @@ def build_generation_redirect_url(*, document_code=None, play=False, auto_start=
     return f"{base_url}?{urlencode(query_items)}" if query_items else base_url
 
 
-def build_history_preview_url(document, preview_detail_sn=None):
+def build_history_preview_url(document, preview_detail_sn=None, *, mode=None):
     query_items = [("docs_cd", document.document_type_id)]
     if preview_detail_sn is not None:
         query_items.append(("preview_detail", str(preview_detail_sn)))
+        query_items.append(("modal", "history"))
+    if mode == "edit":
+        query_items.append(("mode", "edit"))
     return f"{reverse('doc_detail', args=[document.sn])}?{urlencode(query_items)}"
 
 

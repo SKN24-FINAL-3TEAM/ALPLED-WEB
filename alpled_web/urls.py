@@ -41,10 +41,12 @@ from docs.views import (
 )
 from files.views import file_list
 from projects.views import project_list
-from users.views import user_list
+from users.views import login_view, logout_view, user_list
 
 urlpatterns = [
-    path("", user_list, name="home"),
+    path("", login_view, name="home"),
+    path("login/", login_view, name="login"),
+    path("logout/", logout_view, name="logout"),
     path("users/", user_list, name="user_list"),
     path("projects/", project_list, name="project_list"),
     path("files/", file_list, name="file_list"),

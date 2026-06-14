@@ -4,6 +4,7 @@ import os
 import zipfile
 from urllib.parse import quote
 
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Max
@@ -147,6 +148,7 @@ def _download_files(request, project):
     return response
 
 
+@login_required(login_url="home")
 def file_list(request):
     ensure_initial_reference_data()
     current_project, _ = resolve_current_project(request)

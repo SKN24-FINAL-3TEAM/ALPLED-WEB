@@ -11,7 +11,7 @@ class UserListViewTests(TestCase):
     def setUp(self):
         self.admin = User.objects.filter(user_id="admin").first()
         if self.admin is None:
-            self.admin = User.objects.create(
+            self.admin = User.objects.create_user(
                 sn=1,
                 user_id="admin",
                 password="abc1234",
@@ -20,6 +20,40 @@ class UserListViewTests(TestCase):
                 tmpr_pswd_yn=YesNoChoices.NO,
                 use_yn=YesNoChoices.YES,
             )
+        else:
+            self.admin.set_password("abc1234")
+            self.admin.save(update_fields=["password"])
+        self.client.force_login(self.admin)
+
+    def test_login_view_renders_for_anonymous_user(self):
+        self.client.logout()
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "users/login.html")
+
+    def test_login_view_authenticates_and_redirects_to_user_list(self):
+        self.client.logout()
+
+        response = self.client.post(
+            reverse("login"),
+            {"user_id": "admin", "password": "abc1234"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("user_list"))
+
+    def test_logout_redirects_to_login_page(self):
+        response = self.client.post(reverse("logout"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("home"))
+
+    def test_logout_rejects_get_requests(self):
+        response = self.client.get(reverse("logout"))
+
+        self.assertEqual(response.status_code, 405)
 
     def test_create_user_inserts_requested_values(self):
         response = self.client.post(

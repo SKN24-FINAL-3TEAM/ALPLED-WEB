@@ -1,6 +1,7 @@
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.http import Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -44,6 +45,8 @@ from .services import (
     get_current_generation_code,
     get_detail_by_sn,
     get_document_label,
+    get_document_history_queryset,
+    get_document_title,
     get_document_type_choices,
     get_document_view_state,
     get_generation_progress_rows,
@@ -180,6 +183,7 @@ def _get_generation_context(request, current_project, actor, document_code, stat
     }, None
 
 
+@login_required(login_url="home")
 def document_history_list(request):
     ensure_initial_reference_data()
     current_project, _ = resolve_current_project(request)
@@ -188,13 +192,7 @@ def document_history_list(request):
     selected_document_label = get_document_label(document_code)
     generation_state = get_generation_state(request.session, current_project)
 
-    documents = Document.objects.none()
-    if current_project is not None:
-        documents = (
-            Document.objects.filter(project=current_project, document_type_id=document_code)
-            .select_related("document_type", "created_by", "user")
-            .order_by("-created_at", "-sn")
-        )
+    documents = get_document_history_queryset(current_project, document_code)
 
     document_rows = build_document_rows(documents)
     can_generate = can_access_initial_generation(current_project, actor, generation_state)
@@ -212,6 +210,7 @@ def document_history_list(request):
     return render(request, "docs/doc_history_list.html", context)
 
 
+@login_required(login_url="home")
 def document_generate(request):
     ensure_initial_reference_data()
     current_project, _ = resolve_current_project(request)
@@ -315,6 +314,7 @@ def document_generate(request):
     return render(request, "docs/doc_generate.html", context)
 
 
+@login_required(login_url="home")
 def document_detail(request, document_sn):
     ensure_initial_reference_data()
     current_project, _ = resolve_current_project(request)
@@ -350,7 +350,11 @@ def document_detail(request, document_sn):
             "sn": detail.sn,
             "created_at": detail.created_at,
             "creator_name": getattr(detail.created_by, "name", "-") or "-",
-            "preview_url": build_history_preview_url(document, detail.sn),
+            "preview_url": build_history_preview_url(
+                document,
+                detail.sn,
+                mode="edit" if preferred_mode == "edit" else None,
+            ),
             "restore_url": reverse("doc_restore_revision", args=[document.sn, detail.sn]),
         }
         for detail in revisions
@@ -402,6 +406,7 @@ def document_detail(request, document_sn):
     return render(request, "docs/doc_detail.html", context)
 
 
+@login_required(login_url="home")
 def document_lock(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -417,6 +422,7 @@ def document_lock(request, document_sn):
     return redirect(build_document_detail_url(document, mode="edit"))
 
 
+@login_required(login_url="home")
 def document_save(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -436,6 +442,7 @@ def document_save(request, document_sn):
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
+@login_required(login_url="home")
 def document_cancel_edit(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -447,6 +454,7 @@ def document_cancel_edit(request, document_sn):
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
+@login_required(login_url="home")
 def document_confirm(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -475,6 +483,7 @@ def document_confirm(request, document_sn):
     return redirect(reverse("doc_detail", args=[confirmed_document.sn]))
 
 
+@login_required(login_url="home")
 def document_restore_revision(request, document_sn, detail_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -496,6 +505,7 @@ def document_restore_revision(request, document_sn, detail_sn):
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
+@login_required(login_url="home")
 def document_auto_apply(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -520,6 +530,7 @@ def document_auto_apply(request, document_sn):
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
+@login_required(login_url="home")
 def document_request_approval(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -560,6 +571,7 @@ def document_content(request, document_sn):
     return response
 
 
+@login_required(login_url="home")
 def document_editor_config(request, document_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -596,6 +608,7 @@ def document_callback(request, document_sn):
     return JsonResponse({"error": 0})
 
 
+@login_required(login_url="home")
 def document_cancel_approval(request, approval_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -611,6 +624,7 @@ def document_cancel_approval(request, approval_sn):
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
+@login_required(login_url="home")
 def approval_list(request):
     ensure_initial_reference_data()
     current_project, _ = resolve_current_project(request)
@@ -646,6 +660,7 @@ def approval_list(request):
     return render(request, "docs/approval_list.html", context)
 
 
+@login_required(login_url="home")
 def approval_detail(request, approval_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -689,12 +704,14 @@ def approval_detail(request, approval_sn):
     return render(request, "docs/approval_detail.html", context)
 
 
+@login_required(login_url="home")
 def approval_consistency(request, approval_sn):
     if request.method != "POST":
         return redirect(reverse("doc_approval_detail", args=[approval_sn]))
     return redirect(f"{reverse('doc_approval_detail', args=[approval_sn])}?consistency=1")
 
 
+@login_required(login_url="home")
 def approval_approve(request, approval_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
@@ -717,6 +734,7 @@ def approval_approve(request, approval_sn):
     return redirect(reverse("doc_detail", args=[approved_document.sn]))
 
 
+@login_required(login_url="home")
 def approval_reject(request, approval_sn):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)

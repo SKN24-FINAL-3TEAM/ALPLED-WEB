@@ -11,7 +11,7 @@ class FileListViewTests(TestCase):
     def setUp(self):
         self.user = User.objects.filter(user_id="admin").first()
         if self.user is None:
-            self.user = User.objects.create(
+            self.user = User.objects.create_user(
                 sn=1,
                 user_id="admin",
                 password="abc1234",
@@ -19,6 +19,10 @@ class FileListViewTests(TestCase):
                 sys_mngr_yn="Y",
                 use_yn="Y",
             )
+        else:
+            self.user.set_password("abc1234")
+            self.user.save(update_fields=["password"])
+        self.client.force_login(self.user)
 
         self.role_member, _ = Code.objects.get_or_create(
             code="ROLE_MEMBER",
