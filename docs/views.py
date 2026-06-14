@@ -31,7 +31,8 @@ from .services import (
     build_editor_config,
     build_generation_redirect_url,
     build_generation_steps,
-    build_history_preview_url,
+    build_history_preview_api_url,
+    can_request_approval,
     can_access_initial_generation,
     cancel_approval_request,
     clear_generation_state,
@@ -54,6 +55,7 @@ from .services import (
     get_generation_state,
     get_latest_detail,
     get_project_files,
+    has_document_version,
     is_generation_complete,
     is_project_manager,
     is_project_participant,
@@ -62,12 +64,14 @@ from .services import (
     parse_callback_payload,
     reject_request,
     release_document_lock,
+    request_force_save,
     resolve_document_code,
     restore_revision,
     save_generation_state,
     save_revision,
     update_generation_selected_files,
     validate_document_content_token,
+    wait_for_new_revision,
 )
 
 
@@ -117,6 +121,17 @@ def _document_detail_redirect(document, **query):
     if not query:
         return base_url
     return f"{base_url}?{urlencode(query)}"
+
+
+def _approval_detail_redirect(approval, **query):
+    base_url = reverse("doc_approval_detail", args=[approval.sn])
+    if not query:
+        return base_url
+    return f"{base_url}?{urlencode(query)}"
+
+
+def _is_ajax_request(request):
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 def _build_history_help_text(can_generate):
@@ -350,11 +365,7 @@ def document_detail(request, document_sn):
             "sn": detail.sn,
             "created_at": detail.created_at,
             "creator_name": getattr(detail.created_by, "name", "-") or "-",
-            "preview_url": build_history_preview_url(
-                document,
-                detail.sn,
-                mode="edit" if preferred_mode == "edit" else None,
-            ),
+            "preview_url": build_history_preview_api_url(document, detail.sn),
             "restore_url": reverse("doc_restore_revision", args=[document.sn, detail.sn]),
         }
         for detail in revisions
@@ -386,6 +397,13 @@ def document_detail(request, document_sn):
         "revision_rows": revision_rows,
         "can_confirm": is_generation_draft and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
         "can_edit": state == "view" and pending_approval is None,
+        "can_request_approval": state == "view"
+        and can_request_approval(
+            document,
+            actor,
+            pending_approval=pending_approval,
+            is_generation_draft=is_generation_draft,
+        ),
         "locked_by_name": getattr(document.user, "name", ""),
         "meeting_documents": build_project_file_rows(meeting_files),
         "meeting_file_type": meeting_file_type,
@@ -395,6 +413,7 @@ def document_detail(request, document_sn):
         "search_field_choices": SEARCH_FIELD_CHOICES,
         "open_history_modal": preview_detail is not None or request.GET.get("modal") == "history",
         "open_meeting_modal": request.GET.get("modal") == "meeting-files",
+        "open_approval_request_modal": request.GET.get("modal") == "approval-request",
         "onlyoffice_enabled": bool(settings.ONLYOFFICE_DOCUMENT_SERVER_URL),
         "onlyoffice_document_server_url": settings.ONLYOFFICE_DOCUMENT_SERVER_URL.rstrip("/"),
         "download_url": f"{reverse('doc_content', args=[document.sn])}?download=1",
@@ -428,18 +447,79 @@ def document_save(request, document_sn):
     actor = get_actor(request)
     document = _get_document_or_404(current_project, document_sn)
     _ensure_document_access(current_project, actor, document)
+    is_ajax = _is_ajax_request(request)
     if request.method != "POST":
+        if is_ajax:
+            return JsonResponse({"message": "잘못된 요청입니다."}, status=405)
         return redirect(reverse("doc_detail", args=[document.sn]))
     if document.user_id != actor.sn:
+        if is_ajax:
+            return JsonResponse({"message": "문서를 점유한 사용자만 저장할 수 있습니다."}, status=403)
         messages.error(request, "문서를 점유한 사용자만 저장할 수 있습니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
 
+    latest_detail = get_latest_detail(document)
     text_content = request.POST.get("content_text", "").strip()
+    saved_detail = latest_detail
     if text_content:
-        save_revision(document, actor, text_content=text_content, modification_content="수정 저장")
+        saved_detail = save_revision(document, actor, text_content=text_content, modification_content="수정 저장")
+    elif settings.ONLYOFFICE_DOCUMENT_SERVER_URL:
+        baseline_value = request.POST.get("baseline_detail_sn", "").strip()
+        baseline_detail_sn = getattr(latest_detail, "sn", None)
+        if baseline_value:
+            try:
+                baseline_detail_sn = int(baseline_value)
+            except ValueError:
+                baseline_detail_sn = getattr(latest_detail, "sn", None)
+        try:
+            force_save_result = request_force_save(
+                document,
+                latest_detail=latest_detail,
+                userdata=f"doc-save-{document.sn}-{actor.sn}",
+            )
+        except Exception:
+            message = "OnlyOffice 저장 요청을 전송하지 못했습니다. 환경 설정을 확인해 주세요."
+            if is_ajax:
+                return JsonResponse({"message": message}, status=502)
+            messages.error(request, message)
+            return redirect(build_document_detail_url(document, mode="edit"))
+
+        force_save_error = force_save_result.get("error")
+        if force_save_error == 0:
+            saved_detail = wait_for_new_revision(document, baseline_detail_sn=baseline_detail_sn)
+            if saved_detail is None or getattr(saved_detail, "sn", None) == baseline_detail_sn:
+                message = "OnlyOffice 저장 결과를 아직 받지 못했습니다. 잠시 후 다시 시도해 주세요."
+                if is_ajax:
+                    return JsonResponse({"message": message}, status=409)
+                messages.error(request, message)
+                return redirect(build_document_detail_url(document, mode="edit"))
+        elif force_save_error == 4:
+            saved_detail = latest_detail
+        else:
+            error_messages = {
+                1: "현재 편집 중인 문서를 찾지 못했습니다.",
+                2: "OnlyOffice callback URL 설정이 올바르지 않습니다.",
+                3: "OnlyOffice 내부 오류로 저장하지 못했습니다.",
+                5: "OnlyOffice 저장 명령 형식이 올바르지 않습니다.",
+                6: "OnlyOffice 토큰 검증에 실패했습니다.",
+            }
+            message = error_messages.get(force_save_error, "OnlyOffice 저장 요청 처리에 실패했습니다.")
+            if is_ajax:
+                return JsonResponse({"message": message}, status=502)
+            messages.error(request, message)
+            return redirect(build_document_detail_url(document, mode="edit"))
     release_document_lock(document, actor)
+    detail_url = reverse("doc_detail", args=[document.sn])
+    if is_ajax:
+        return JsonResponse(
+            {
+                "message": "문서 수정 내용을 저장했습니다.",
+                "redirect_url": detail_url,
+                "latest_detail_sn": getattr(saved_detail, "sn", None),
+            }
+        )
     messages.success(request, "문서 수정 내용을 저장했습니다.")
-    return redirect(reverse("doc_detail", args=[document.sn]))
+    return redirect(detail_url)
 
 
 @login_required(login_url="home")
@@ -538,18 +618,44 @@ def document_request_approval(request, document_sn):
     _ensure_document_access(current_project, actor, document)
     if request.method != "POST":
         return redirect(reverse("doc_detail", args=[document.sn]))
-    if document.user_id != actor.sn:
-        messages.error(request, "문서를 점유한 사용자만 승인 요청할 수 있습니다.")
+    _, pending_approval = get_document_view_state(document, actor, preferred_mode="view")
+    if not can_request_approval(
+        document,
+        actor,
+        pending_approval=pending_approval,
+        is_generation_draft=(document.version == "0"),
+    ):
+        messages.error(request, "현재 화면에서 승인 요청할 수 없습니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
 
     request_content = request.POST.get("request_content", "").strip()
     if not request_content:
         messages.error(request, "승인 요청 내용을 입력해 주세요.")
-        return redirect(reverse("doc_detail", args=[document.sn]))
+        return redirect(_document_detail_redirect(document, modal="approval-request"))
 
     create_approval_request(document, actor, request_content)
     messages.success(request, "프로젝트 관리자에게 승인 요청을 전송했습니다.")
     return redirect(reverse("doc_detail", args=[document.sn]))
+
+
+@login_required(login_url="home")
+def document_history_preview(request, document_sn, detail_sn):
+    current_project, _ = resolve_current_project(request)
+    actor = get_actor(request)
+    document = _get_document_or_404(current_project, document_sn)
+    _ensure_document_access(current_project, actor, document)
+
+    detail = get_detail_by_sn(document, detail_sn)
+    if detail is None:
+        return JsonResponse({"message": "미리볼 이력을 찾을 수 없습니다."}, status=404)
+
+    return JsonResponse(
+        {
+            "preview_text": extract_text_from_docx(detail.content) or "문서 내용이 없습니다.",
+            "creator_name": getattr(detail.created_by, "name", "-") or "-",
+            "created_at": detail.created_at.strftime("%Y-%m-%d %H:%M"),
+        }
+    )
 
 
 def document_content(request, document_sn):
@@ -700,6 +806,9 @@ def approval_detail(request, approval_sn):
         "updated_text": updated_text,
         "review": review,
         "requester_name": getattr(approval.created_by, "name", "-") or "-",
+        "can_take_action": is_manager and approval.approval_status_id == "APRV_REQ",
+        "open_approve_modal": request.GET.get("modal") == "approve",
+        "open_reject_modal": request.GET.get("modal") == "reject",
     }
     return render(request, "docs/approval_detail.html", context)
 
@@ -723,11 +832,17 @@ def approval_approve(request, approval_sn):
     _ensure_document_access(current_project, actor, document)
     if request.method != "POST" or not is_project_manager(current_project, actor):
         return redirect(reverse("doc_approval_detail", args=[approval.sn]))
+    if approval.approval_status_id != "APRV_REQ":
+        messages.error(request, "처리할 수 없는 승인 요청 상태입니다.")
+        return redirect(reverse("doc_approval_detail", args=[approval.sn]))
 
     new_version = request.POST.get("new_version", "").strip()
     if not new_version:
         messages.error(request, "새 버전명을 입력해 주세요.")
-        return redirect(reverse("doc_approval_detail", args=[approval.sn]))
+        return redirect(_approval_detail_redirect(approval, modal="approve"))
+    if has_document_version(document.project, document.document_type_id, new_version):
+        messages.error(request, "동일한 산출물 종류에 같은 버전이 이미 존재합니다. 새 버전명을 다시 입력해 주세요.")
+        return redirect(_approval_detail_redirect(approval, modal="approve"))
 
     approved_document, _ = approve_request(approval, actor, new_version)
     messages.success(request, "승인 요청을 반영하고 새 버전을 생성했습니다.")
@@ -746,11 +861,14 @@ def approval_reject(request, approval_sn):
     _ensure_document_access(current_project, actor, document)
     if request.method != "POST" or not is_project_manager(current_project, actor):
         return redirect(reverse("doc_approval_detail", args=[approval.sn]))
+    if approval.approval_status_id != "APRV_REQ":
+        messages.error(request, "처리할 수 없는 승인 요청 상태입니다.")
+        return redirect(reverse("doc_approval_detail", args=[approval.sn]))
 
     reason = request.POST.get("rejection_reason", "").strip()
     if not reason:
         messages.error(request, "반려 사유를 입력해 주세요.")
-        return redirect(reverse("doc_approval_detail", args=[approval.sn]))
+        return redirect(_approval_detail_redirect(approval, modal="reject"))
 
     reject_request(approval, actor, reason)
     messages.success(request, "승인 요청을 반려했습니다.")

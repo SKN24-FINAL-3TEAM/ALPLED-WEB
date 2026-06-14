@@ -1,7 +1,8 @@
 import io
 import json
+import time
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from django.conf import settings
 from django.db import transaction
@@ -126,6 +127,13 @@ def get_document_title(document):
     return f"{document.document_type_id}_v{document.version}.docx"
 
 
+def build_document_key(document, latest_detail=None):
+    if latest_detail is None:
+        latest_detail = get_latest_detail(document)
+    timestamp = int(latest_detail.created_at.timestamp()) if latest_detail else document.sn
+    return f"docs-{document.sn}-v{document.version}-{timestamp}"
+
+
 def build_docx_bytes(title, body_lines):
     content = DocxDocument()
     content.add_heading(title, level=0)
@@ -153,6 +161,37 @@ def download_remote_content(url):
         return None
     with urlopen(url, timeout=10) as response:
         return response.read()
+
+
+def request_force_save(document, *, latest_detail=None, userdata=None):
+    document_server_url = settings.ONLYOFFICE_DOCUMENT_SERVER_URL.rstrip("/")
+    if not document_server_url:
+        raise ValueError("OnlyOffice Document Server URL is not configured.")
+
+    document_key = build_document_key(document, latest_detail=latest_detail)
+    command_url = f"{document_server_url}/command?shardkey={document_key}"
+    payload = {
+        "c": "forcesave",
+        "key": document_key,
+    }
+    if userdata:
+        payload["userdata"] = userdata
+
+    if settings.ONLYOFFICE_JWT_SECRET:
+        request_payload = {
+            "token": encode_jwt(payload, settings.ONLYOFFICE_JWT_SECRET),
+        }
+    else:
+        request_payload = payload
+
+    request = Request(
+        command_url,
+        data=json.dumps(request_payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8") or "{}")
 
 
 def get_latest_detail(document):
@@ -384,6 +423,12 @@ def restore_revision(document, actor, source_detail):
     )
 
 
+def can_request_approval(document, actor, *, pending_approval=None, is_generation_draft=False):
+    if actor is None or is_generation_draft or pending_approval is not None:
+        return False
+    return document.updated_by_id == actor.sn
+
+
 @transaction.atomic
 def create_approval_request(document, actor, request_content):
     latest_detail = get_latest_detail(document)
@@ -403,6 +448,14 @@ def create_approval_request(document, actor, request_content):
 @transaction.atomic
 def cancel_approval_request(approval):
     approval.delete()
+
+
+def has_document_version(project, document_code, version):
+    return Document.objects.filter(
+        project=project,
+        document_type_id=document_code,
+        version=version,
+    ).exists()
 
 
 @transaction.atomic
@@ -579,6 +632,10 @@ def build_history_preview_url(document, preview_detail_sn=None, *, mode=None):
     return f"{reverse('doc_detail', args=[document.sn])}?{urlencode(query_items)}"
 
 
+def build_history_preview_api_url(document, detail_sn):
+    return reverse("doc_history_preview", args=[document.sn, detail_sn])
+
+
 def build_document_detail_url(document, *, mode=None):
     query_items = []
     if mode:
@@ -609,6 +666,16 @@ def get_document_view_state(document, actor, preferred_mode="view"):
     return "view", pending_approval
 
 
+def wait_for_new_revision(document, *, baseline_detail_sn=None, timeout_seconds=5, interval_seconds=0.25):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        latest_detail = get_latest_detail(document)
+        if latest_detail is not None and latest_detail.sn != baseline_detail_sn:
+            return latest_detail
+        time.sleep(interval_seconds)
+    return get_latest_detail(document)
+
+
 def build_editor_config(request, document, actor, mode):
     latest_detail = get_latest_detail(document)
     public_base_url = getattr(settings, "DJANGO_PUBLIC_BASE_URL", "").rstrip("/")
@@ -631,25 +698,27 @@ def build_editor_config(request, document, actor, mode):
         document_url = f"{document_url}?{document_query}"
 
     payload = {
+        "documentType": "word",
+        "width": "100%",
         "document": {
             "title": get_document_title(document),
             "url": document_url,
             "fileType": "docx",
-            "key": f"docs-{document.sn}-v{document.version}-{int(latest_detail.created_at.timestamp()) if latest_detail else document.sn}",
+            "key": build_document_key(document, latest_detail=latest_detail),
+            "permissions": {
+                "edit": mode == "edit",
+                "download": True,
+                "print": True,
+                "comment": False,
+                "review": False,
+            },
         },
         "editorConfig": {
             "callbackUrl": f"{public_base_url}{reverse('doc_callback', args=[document.sn])}",
             "mode": mode,
             "user": {"id": str(actor.sn), "name": actor.name},
         },
-        "permissions": {
-            "edit": mode == "edit",
-            "download": True,
-            "print": True,
-            "comment": False,
-            "review": False,
-        },
-        "type": "embedded",
+        "type": "desktop" if mode == "edit" else "embedded",
     }
 
     if settings.ONLYOFFICE_JWT_SECRET:

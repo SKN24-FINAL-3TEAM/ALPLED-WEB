@@ -82,25 +82,16 @@
         </div>
       {% endif %}
 
-      <div class="mt-6 grid gap-6 lg:grid-cols-2">
-        <form method="post" action="{% url 'doc_approval_approve' approval.sn %}" class="rounded-2xl border border-slate-200 p-5">
-          {% csrf_token %}
-          <label class="text-sm font-semibold text-slate-700" for="new_version">새 버전명</label>
-          <input id="new_version" type="text" name="new_version" class="mt-2 w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-sm" placeholder="예: 1.1">
-          <button type="submit" class="mt-4 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+      {% if can_take_action %}
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button type="button" data-modal-target="approval-approve-modal" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
             승인
           </button>
-        </form>
-
-        <form method="post" action="{% url 'doc_approval_reject' approval.sn %}" class="rounded-2xl border border-slate-200 p-5">
-          {% csrf_token %}
-          <label class="text-sm font-semibold text-slate-700" for="rejection_reason">반려 사유</label>
-          <textarea id="rejection_reason" name="rejection_reason" rows="4" class="mt-2 w-full rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm" placeholder="반려 사유를 입력하세요."></textarea>
-          <button type="submit" class="mt-4 rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700">
+          <button type="button" data-modal-target="approval-reject-modal" class="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700">
             반려
           </button>
-        </form>
-      </div>
+        </div>
+      {% endif %}
     </section>
   {% else %}
     <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -108,4 +99,62 @@
     </section>
   {% endif %}
 </div>
+
+{% if can_take_action %}
+  <div id="approval-approve-modal" data-modal-root class="fixed inset-0 z-50 {% if open_approve_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
+    <div class="relative w-full max-w-xl">
+      <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
+        <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-900">승인</h3>
+            <p class="mt-1 text-sm text-slate-500">생성할 새 버전명을 입력해 주세요.</p>
+          </div>
+          <button type="button" data-modal-hide="approval-approve-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+            <span class="text-3xl leading-none">&times;</span>
+          </button>
+        </div>
+        <div class="px-6 py-6">
+          <form method="post" action="{% url 'doc_approval_approve' approval.sn %}" class="space-y-4">
+            {% csrf_token %}
+            <label class="text-sm font-semibold text-slate-700" for="new_version">새 버전명</label>
+            <input id="new_version" type="text" name="new_version" class="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-sm" placeholder="예: 1.1">
+            <div class="flex justify-end">
+              <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                승인
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="approval-reject-modal" data-modal-root class="fixed inset-0 z-50 {% if open_reject_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
+    <div class="relative w-full max-w-xl">
+      <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
+        <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-900">반려</h3>
+            <p class="mt-1 text-sm text-slate-500">반려 사유를 입력해 주세요.</p>
+          </div>
+          <button type="button" data-modal-hide="approval-reject-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+            <span class="text-3xl leading-none">&times;</span>
+          </button>
+        </div>
+        <div class="px-6 py-6">
+          <form method="post" action="{% url 'doc_approval_reject' approval.sn %}" class="space-y-4">
+            {% csrf_token %}
+            <label class="text-sm font-semibold text-slate-700" for="rejection_reason">반려 사유</label>
+            <textarea id="rejection_reason" name="rejection_reason" rows="4" class="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm" placeholder="반려 사유를 입력하세요."></textarea>
+            <div class="flex justify-end">
+              <button type="submit" class="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700">
+                반려
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
 {% endblock %}

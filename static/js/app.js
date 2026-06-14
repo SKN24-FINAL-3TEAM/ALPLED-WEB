@@ -2,6 +2,7 @@
   const DOC_ALLOWED_EXTENSIONS = new Set(["docx", "hwp", "pdf"]);
   const DOC_MAX_FILE_SIZE = 10 * 1024 * 1024;
   const DOC_MAX_FILES_PER_UPLOAD = 5;
+  const onlyOfficeEditors = new Map();
 
   function showModal(modal) {
     if (!modal) return;
@@ -591,9 +592,12 @@
     const configUrl = root.dataset.configUrl;
     const documentServerUrl = root.dataset.documentServerUrl;
     if (!configUrl) return;
+    const editorHeight = Math.max(720, Math.floor(window.innerHeight * 0.8));
+    const editorHeightPx = `${editorHeight}px`;
+    root.style.height = editorHeightPx;
 
     if (!documentServerUrl) {
-      root.innerHTML = '<div class="flex h-[640px] items-center justify-center text-sm text-slate-500">OnlyOffice 서버 주소가 설정되지 않았습니다.</div>';
+      root.innerHTML = `<div class="flex h-full items-center justify-center text-sm text-slate-500" style="height:${editorHeightPx};">OnlyOffice 서버 주소가 설정되지 않았습니다.</div>`;
       return;
     }
 
@@ -603,6 +607,8 @@
         throw new Error(`config request failed: ${response.status}`);
       }
       const config = await response.json();
+      config.width = config.width || "100%";
+      config.height = editorHeight;
 
       await loadScriptOnce(`${documentServerUrl}/web-apps/apps/api/documents/api.js`);
       if (!(window.DocsAPI && window.DocsAPI.DocEditor)) {
@@ -611,12 +617,14 @@
 
       const holder = document.createElement("div");
       holder.id = `onlyoffice-${Math.random().toString(36).slice(2)}`;
-      holder.className = "h-[640px] w-full";
+      holder.className = "h-full w-full";
+      holder.style.height = editorHeightPx;
       root.innerHTML = "";
       root.appendChild(holder);
-      new window.DocsAPI.DocEditor(holder.id, config);
+      const editor = new window.DocsAPI.DocEditor(holder.id, config);
+      onlyOfficeEditors.set(root, editor);
     } catch (error) {
-      root.innerHTML = '<div class="flex h-[640px] items-center justify-center px-6 text-center text-sm text-slate-500">OnlyOffice 편집기를 불러오지 못했습니다. 환경 변수와 Docker 상태를 확인해 주세요.</div>';
+      root.innerHTML = `<div class="flex h-full items-center justify-center px-6 text-center text-sm text-slate-500" style="height:${editorHeightPx};">OnlyOffice 편집기를 불러오지 못했습니다. 환경 변수와 Docker 상태를 확인해 주세요.</div>`;
     }
   }
 
@@ -624,6 +632,115 @@
     document.querySelectorAll("[data-onlyoffice-root]").forEach((root) => {
       initOnlyOfficeEditor(root);
     });
+  }
+
+  function setInlineStatus(node, message, tone = "info") {
+    if (!node) return;
+
+    const toneClasses = {
+      success: ["border-emerald-200", "bg-emerald-50", "text-emerald-800"],
+      error: ["border-red-200", "bg-red-50", "text-red-800"],
+      warning: ["border-amber-200", "bg-amber-50", "text-amber-800"],
+      info: ["border-blue-200", "bg-blue-50", "text-blue-800"],
+    };
+    const resolvedTone = toneClasses[tone] ? tone : "info";
+
+    node.className = "rounded-2xl border px-4 py-3 text-sm";
+    node.classList.add(...toneClasses[resolvedTone]);
+    node.textContent = message;
+    node.classList.remove("hidden");
+  }
+
+  async function submitOnlyOfficeSave(form, submitter) {
+    if (!form || form.dataset.submitting === "true") return;
+
+    const editRoot = form.closest("[data-onlyoffice-edit-root]");
+    const statusNode = editRoot?.querySelector("[data-doc-save-status]");
+    const saveButton = submitter || form.querySelector("[data-doc-save-submit]");
+    const csrfToken = form.querySelector('input[name="csrfmiddlewaretoken"]')?.value || "";
+    const formData = new FormData(form);
+
+    form.dataset.submitting = "true";
+    if (saveButton) {
+      saveButton.disabled = true;
+    }
+    setInlineStatus(statusNode, "OnlyOffice 저장 완료를 확인하는 중입니다.", "info");
+
+    try {
+      const response = await window.fetch(form.action, {
+        method: "POST",
+        body: formData,
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": csrfToken,
+        },
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setInlineStatus(statusNode, payload.message || "문서 저장을 완료하지 못했습니다.", "error");
+        return;
+      }
+
+      setInlineStatus(statusNode, payload.message || "문서 수정 내용을 저장했습니다.", "success");
+
+      const editorRoot = document.querySelector("[data-onlyoffice-root]");
+      const editor = editorRoot ? onlyOfficeEditors.get(editorRoot) : null;
+      if (editor && typeof editor.destroyEditor === "function") {
+        try {
+          editor.destroyEditor();
+        } catch (error) {
+          // Ignore editor cleanup failures and continue with navigation.
+        }
+      }
+
+      if (payload.redirect_url) {
+        window.location.assign(payload.redirect_url);
+      }
+    } catch (error) {
+      setInlineStatus(statusNode, "문서 저장 중 오류가 발생했습니다. 다시 시도해 주세요.", "error");
+    } finally {
+      delete form.dataset.submitting;
+      if (saveButton) {
+        saveButton.disabled = false;
+      }
+    }
+  }
+
+  async function loadHistoryPreview(previewUrl, trigger) {
+    if (!previewUrl) return;
+
+    const modal = trigger?.closest?.("#history-modal") || document.getElementById("history-modal");
+    const previewContent = modal?.querySelector("[data-history-preview-content]");
+    const previewMeta = modal?.querySelector("[data-history-preview-meta]");
+    if (!modal || !previewContent || !previewMeta) return;
+
+    modal.querySelectorAll("[data-history-preview-row]").forEach((row) => {
+      row.classList.remove("border-blue-300", "bg-blue-50");
+    });
+    trigger?.closest("[data-history-preview-row]")?.classList.add("border-blue-300", "bg-blue-50");
+
+    previewMeta.textContent = "미리보기를 불러오는 중입니다.";
+    previewContent.textContent = "선택한 수정 이력을 불러오는 중입니다.";
+
+    try {
+      const response = await window.fetch(previewUrl, { credentials: "same-origin" });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || `preview request failed: ${response.status}`);
+      }
+
+      const payload = await response.json();
+      previewContent.textContent = payload.preview_text || "문서 내용이 없습니다.";
+      previewMeta.textContent = payload.created_at && payload.creator_name
+        ? `${payload.created_at} · ${payload.creator_name}`
+        : "미리보기";
+    } catch (error) {
+      previewMeta.textContent = "미리보기를 불러오지 못했습니다.";
+      previewContent.textContent = error.message || "수정 이력 미리보기를 불러오지 못했습니다.";
+      showAppAlert("수정 이력 미리보기를 불러오지 못했습니다.", "error");
+    }
   }
 
   document.addEventListener("click", function (event) {
@@ -674,6 +791,12 @@
     const openTrigger = event.target.closest("[data-modal-target]");
     if (openTrigger) {
       showModal(document.getElementById(openTrigger.dataset.modalTarget));
+      return;
+    }
+
+    const historyPreviewTrigger = event.target.closest("[data-history-preview-url]");
+    if (historyPreviewTrigger) {
+      loadHistoryPreview(historyPreviewTrigger.dataset.historyPreviewUrl, historyPreviewTrigger);
       return;
     }
 
@@ -801,6 +924,13 @@
       if (confirmed) {
         resubmitForm(docActionButton.closest("form"), event.submitter);
       }
+      return;
+    }
+
+    const docSaveForm = event.target.closest("[data-doc-save-form]");
+    if (docSaveForm) {
+      event.preventDefault();
+      await submitOnlyOfficeSave(docSaveForm, event.submitter);
       return;
     }
 

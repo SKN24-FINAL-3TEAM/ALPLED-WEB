@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.urls import reverse
 
@@ -244,6 +246,82 @@ class DocumentWorkflowViewTests(TestCase):
         document.refresh_from_db()
         self.assertIsNone(document.user)
 
+    def test_document_save_waits_for_onlyoffice_revision_when_form_has_no_text(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        detail = self._create_detail(sn=1, document=document)
+
+        with patch("docs.views.request_force_save", return_value={"error": 0}) as force_save_mock, patch(
+            "docs.views.wait_for_new_revision", return_value=detail
+        ) as wait_mock, patch(
+            "docs.views.settings.ONLYOFFICE_DOCUMENT_SERVER_URL",
+            "http://document-server",
+        ):
+            response = self.client.post(reverse("doc_save", args=[document.sn]), {})
+
+        self.assertEqual(response.status_code, 302)
+        force_save_mock.assert_called_once()
+        wait_mock.assert_called_once_with(document, baseline_detail_sn=detail.sn)
+
+    def test_document_save_ajax_returns_redirect_after_onlyoffice_revision_is_ready(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        detail = self._create_detail(sn=1, document=document)
+        new_detail = self._create_detail(sn=2, document=document)
+
+        with patch("docs.views.request_force_save", return_value={"error": 0}) as force_save_mock, patch(
+            "docs.views.wait_for_new_revision", return_value=new_detail
+        ) as wait_mock, patch(
+            "docs.views.settings.ONLYOFFICE_DOCUMENT_SERVER_URL",
+            "http://document-server",
+        ):
+            response = self.client.post(
+                reverse("doc_save", args=[document.sn]),
+                {"baseline_detail_sn": str(detail.sn)},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["redirect_url"], reverse("doc_detail", args=[document.sn]))
+        force_save_mock.assert_called_once()
+        wait_mock.assert_called_once_with(document, baseline_detail_sn=detail.sn)
+
+    def test_document_save_ajax_keeps_edit_mode_when_onlyoffice_revision_is_missing(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        detail = self._create_detail(sn=1, document=document)
+
+        with patch("docs.views.request_force_save", return_value={"error": 0}), patch(
+            "docs.views.wait_for_new_revision", return_value=detail
+        ), patch(
+            "docs.views.settings.ONLYOFFICE_DOCUMENT_SERVER_URL",
+            "http://document-server",
+        ):
+            response = self.client.post(
+                reverse("doc_save", args=[document.sn]),
+                {"baseline_detail_sn": str(detail.sn)},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        self.assertEqual(response.status_code, 409)
+        document.refresh_from_db()
+        self.assertEqual(document.user_id, self.user.sn)
+
+    def test_document_save_ajax_redirects_when_onlyoffice_reports_no_changes(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        detail = self._create_detail(sn=1, document=document)
+
+        with patch("docs.views.request_force_save", return_value={"error": 4}) as force_save_mock, patch(
+            "docs.views.settings.ONLYOFFICE_DOCUMENT_SERVER_URL",
+            "http://document-server",
+        ):
+            response = self.client.post(
+                reverse("doc_save", args=[document.sn]),
+                {"baseline_detail_sn": str(detail.sn)},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["latest_detail_sn"], detail.sn)
+        force_save_mock.assert_called_once()
+
     def test_document_download_uses_shared_document_title_helper(self):
         document = self._create_document(sn=1, version="1.0", user=None)
         self._create_detail(sn=1, document=document, content=b"docx-binary")
@@ -253,7 +331,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('filename="DOC_SRS_v1.0.docx"', response["Content-Disposition"])
 
-    def test_history_preview_link_preserves_edit_mode_and_restore_button(self):
+    def test_history_preview_link_uses_modal_preview_endpoint(self):
         document = self._create_document(sn=1, version="1.0", user=self.user)
         self._create_detail(sn=1, document=document, content=b"seed")
 
@@ -261,9 +339,28 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         preview_url = response.context["revision_rows"][0]["preview_url"]
-        self.assertIn("preview_detail=1", preview_url)
-        self.assertIn("mode=edit", preview_url)
-        self.assertIn("modal=history", preview_url)
+        self.assertEqual(
+            preview_url,
+            reverse("doc_history_preview", args=[document.sn, 1]),
+        )
+
+    def test_history_preview_endpoint_returns_revision_text_without_page_reload(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        detail = self._create_detail(sn=1, document=document, content=b"seed")
+
+        with patch("docs.views.extract_text_from_docx", return_value="미리보기 본문"):
+            response = self.client.get(reverse("doc_history_preview", args=[document.sn, detail.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["preview_text"], "미리보기 본문")
+
+    def test_history_preview_endpoint_returns_404_for_missing_revision(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        response = self.client.get(reverse("doc_history_preview", args=[document.sn, 999]))
+
+        self.assertEqual(response.status_code, 404)
 
     def test_document_callback_saves_onlyoffice_revision(self):
         document = self._create_document(sn=1, version="0", user=None)
@@ -277,6 +374,30 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(DocumentDetail.objects.filter(document=document).count(), 2)
+
+    def test_editor_config_uses_desktop_type_for_edit_mode(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        response = self.client.get(reverse("doc_editor_config", args=[document.sn]), {"mode": "edit"})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["type"], "desktop")
+        self.assertEqual(payload["editorConfig"]["mode"], "edit")
+        self.assertTrue(payload["document"]["permissions"]["edit"])
+
+    def test_editor_config_uses_embedded_type_for_view_mode(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        response = self.client.get(reverse("doc_editor_config", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["type"], "embedded")
+        self.assertEqual(payload["editorConfig"]["mode"], "view")
+        self.assertFalse(payload["document"]["permissions"]["edit"])
 
     def test_approval_list_view_renders_with_db_driven_choices(self):
         document = self._create_document(sn=1, version="1.0", user=None)
@@ -296,6 +417,80 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "산출물 승인요청")
         self.assertEqual(response.context["document_type_choices"][1][0], "DOC_SRS")
+
+    def test_document_detail_shows_approval_request_button_in_view_mode_for_last_editor(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        self._create_detail(sn=1, document=document)
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "승인요청")
+
+    def test_document_detail_hides_approval_request_button_in_edit_mode(self):
+        document = self._create_document(sn=1, version="1.0", user=self.user)
+        self._create_detail(sn=1, document=document)
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'data-modal-target="approval-request-modal"', html=False)
+
+    def test_document_request_approval_allows_last_editor_from_detail_view(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        detail = self._create_detail(sn=1, document=document)
+
+        response = self.client.post(
+            reverse("doc_request_approval", args=[document.sn]),
+            {"request_content": "승인 요청입니다."},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        approval = DocumentApproval.objects.get(detail=detail)
+        self.assertEqual(approval.request_content, "승인 요청입니다.")
+
+    def test_approval_detail_uses_modal_buttons_instead_of_inline_forms(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        detail = self._create_detail(sn=1, document=document)
+        approval = DocumentApproval.objects.create(
+            sn=1,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="승인 요청입니다.",
+            rejection_reason=None,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+
+        response = self.client.get(reverse("doc_approval_detail", args=[approval.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-modal-target="approval-approve-modal"', html=False)
+        self.assertContains(response, 'data-modal-target="approval-reject-modal"', html=False)
+
+    def test_manager_cannot_approve_duplicate_version_for_same_document_type(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        detail = self._create_detail(sn=1, document=document)
+        approval = DocumentApproval.objects.create(
+            sn=1,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="승인 요청입니다.",
+            rejection_reason=None,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        self._create_document(sn=2, version="1.1", user=None, document_type=self.srs_code)
+
+        response = self.client.post(
+            reverse("doc_approval_approve", args=[approval.sn]),
+            {"new_version": "1.1"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.endswith("?modal=approve"))
+        approval.refresh_from_db()
+        self.assertEqual(approval.approval_status_id, "APRV_REQ")
 
     def test_manager_can_approve_request_and_create_new_version(self):
         document = self._create_document(sn=1, version="1.0", user=None)
