@@ -59,9 +59,9 @@ def _ensure_admin_user():
         admin.department = "시스템"
         admin.position = "관리자"
         admin.sys_mngr_yn = "Y"
-        admin.tmpr_pswd_yn = "N"
         admin.use_yn = "Y"
-        if created or not admin.check_password("abc1234"):
+        if created:
+            admin.tmpr_pswd_yn = "N"
             admin.password = make_password("abc1234")
         admin.save()
         return admin

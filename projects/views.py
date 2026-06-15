@@ -1,14 +1,18 @@
-from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.db.models import Max, Q
 from django.shortcuts import redirect, render
+from django.urls import reverse
 
 from common.models import Code, YesNoChoices
 from common.signals import ensure_initial_reference_data
 from users.models import User
 
 from .models import Project, ProjectUserRole
+
+
+DEFAULT_DOCUMENT_CODE = "DOC_SRS"
 
 
 def _next_sn(model):
@@ -18,6 +22,15 @@ def _next_sn(model):
 
 def _get_admin_user():
     return User.objects.filter(user_id="admin").first()
+
+
+def _get_default_redirect_url():
+    return f"{reverse('doc_history_list')}?docs_cd={DEFAULT_DOCUMENT_CODE}"
+
+
+def _redirect_non_admin(request):
+    messages.error(request, "관리자만 접근할 수 있습니다.")
+    return redirect(_get_default_redirect_url())
 
 
 def _search_users(request):
@@ -92,7 +105,7 @@ def _create_project(request):
     member_user_ids = list(dict.fromkeys(_parse_user_ids(request.POST.get("member_user_ids", ""))))
 
     if not project_name:
-        messages.error(request, "프로젝트명을 입력하세요.")
+        messages.error(request, "프로젝트명을 입력해 주세요.")
         return False
 
     selected_user_ids = list(dict.fromkeys(manager_user_ids + member_user_ids))
@@ -157,6 +170,9 @@ def _create_project(request):
 @login_required(login_url="home")
 def project_list(request):
     ensure_initial_reference_data()
+
+    if not request.user.is_staff:
+        return _redirect_non_admin(request)
 
     if request.method == "POST":
         if _create_project(request):

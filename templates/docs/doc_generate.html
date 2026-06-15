@@ -5,67 +5,236 @@
 {% block content %}
 <div class="space-y-6">
   <section class="space-y-4">
-    <div>
-      <h1 class="text-3xl font-bold text-slate-900">{{ title }}</h1>
-      <p class="mt-2 text-sm text-slate-500">{{ current_project.name }}</p>
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-bold text-slate-900">{{ title }}</h1>
+        <p class="mt-2 text-sm text-slate-500">
+          {% if current_project %}{{ current_project.name }}{% else %}현재 선택된 프로젝트가 없습니다.{% endif %}
+        </p>
+      </div>
+      {% if has_active_generation_session and not is_complete %}
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+          <input type="hidden" name="action" value="reset_generation">
+          <button type="submit" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50">
+            생성 초기화
+          </button>
+        </form>
+      {% endif %}
     </div>
   </section>
 
   <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
     <div class="mx-auto grid max-w-6xl gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div class="space-y-4">
-        <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-          사용자 요구사항 정의서 생성을 위해 제안요청서(RFP) 혹은 회의록이 필요합니다.<br>
-          문서관리탭에서 업로드 후 불러와 주세요.
-        </div>
+        {% if show_file_selector %}
+          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            사용자 요구사항 정의서 생성을 위해 제안요청서(RFP) 또는 회의록 문서가 필요합니다.<br>
+            문서 관리에서 업로드한 파일을 선택해 주세요.
+          </div>
 
-        <div class="pl-1">
-          <button type="button" data-modal-target="docs-generate-files-modal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-            {% if has_selected_files %}문서 다시 선택{% else %}문서 불러오기{% endif %}
-          </button>
-        </div>
+          <div class="pl-1">
+            <button type="button" data-modal-target="docs-generate-files-modal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+              {% if has_selected_files %}문서 다시 선택{% else %}문서 불러오기{% endif %}
+            </button>
+          </div>
 
-        {% if has_selected_files %}
-          <div class="max-w-3xl rounded-[1.75rem] border border-slate-200 bg-slate-100/90 px-5 py-5 shadow-inner">
-            <p class="mb-4 text-sm font-semibold text-slate-900">선택 문서</p>
-            <div class="space-y-3">
-              {% for selected_file in selected_files %}
-                <div class="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                  <div class="min-w-0">
-                    <p class="truncate text-sm font-medium text-slate-900">{{ selected_file.name }}</p>
-                    <p class="mt-1 text-xs text-slate-500">{{ selected_file.file_type.name }}</p>
+          {% if has_selected_files %}
+            <div class="max-w-3xl rounded-[1.75rem] border border-slate-200 bg-slate-100/90 px-5 py-5 shadow-inner">
+              <p class="mb-4 text-sm font-semibold text-slate-900">선택 문서</p>
+              <div class="space-y-3">
+                {% for selected_file in selected_files %}
+                  <div class="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                    <div class="min-w-0">
+                      <p class="truncate text-sm font-medium text-slate-900">{{ selected_file.name }}</p>
+                      <p class="mt-1 text-xs text-slate-500">{{ selected_file.file_type.name }}</p>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+        {% elif show_itf_upload %}
+          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            사용자 인터페이스 화면 UI 이미지를 업로드해 주세요.
+          </div>
+
+          <form method="post" enctype="multipart/form-data" data-itf-upload-form>
+            {% csrf_token %}
+            <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+            <input type="hidden" name="action" value="upload_itf_reference">
+            <input type="file" name="itf_references" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple hidden data-itf-file-input>
+            <div data-itf-drop-zone class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="rounded-[1.5rem] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+                <p class="text-sm font-medium text-slate-700">파일을 끌어다 놓거나 파일 선택 버튼으로 직접 선택해 주세요.</p>
+                <p class="mt-2 text-sm text-slate-500">허용 파일 형식: .png, .jpg, .jpeg / 파일당 최대 3MB</p>
+                <button type="button" data-itf-upload-select class="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                  파일 선택
+                </button>
+              </div>
+            </div>
+          </form>
+
+          {% if itf_references %}
+            <div class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="rounded-[1.5rem] bg-slate-200/80 p-5">
+                <div class="space-y-3">
+                  {% for reference in itf_references %}
+                    <div class="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div class="min-w-0">
+                        <p class="truncate text-sm font-medium text-slate-900">{{ reference.name }}</p>
+                      </div>
+                      <form method="post" class="shrink-0">
+                        {% csrf_token %}
+                        <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+                        <input type="hidden" name="action" value="remove_itf_reference">
+                        <input type="hidden" name="reference_token" value="{{ reference.token }}">
+                        <button type="submit" class="text-2xl leading-none text-slate-400 transition hover:text-slate-700" aria-label="참고 이미지 제거">
+                          &times;
+                        </button>
+                      </form>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          {% endif %}
+        {% elif show_architecture_inputs %}
+          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            아키텍처 설계서에 필요한 서버 정보를 입력해 주세요.
+          </div>
+
+          {% if not architecture_networks and not open_arch_form %}
+            <div class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="rounded-[1.5rem] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
+                <p class="text-sm font-medium text-slate-700">서버 사양, 미들웨어, 방화벽, 망 분리 여부를 등록할 수 있습니다.</p>
+                <p class="mt-2 text-sm font-medium text-slate-700">필요한 개수만큼 추가해 주세요.</p>
+                <a href="?docs_cd={{ selected_document_code }}&resume=1&arch_form=1" class="mt-5 inline-flex rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                  서버 정보 추가
+                </a>
+              </div>
+            </div>
+          {% endif %}
+
+          {% if open_arch_form %}
+            <section class="max-w-5xl rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
+              <div class="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <h2 class="text-xl font-semibold text-slate-900">아키텍처 설정</h2>
+                </div>
+                {% if architecture_networks %}
+                  <a href="?docs_cd={{ selected_document_code }}&resume=1" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                    입력 닫기
+                  </a>
+                {% endif %}
+              </div>
+              <form method="post" class="space-y-5">
+                {% csrf_token %}
+                <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+                <input type="hidden" name="action" value="add_project_net">
+
+                <div class="grid gap-5 md:grid-cols-2">
+                  <div class="space-y-2">
+                    <label for="project-net-name" class="block text-sm font-medium text-slate-900">서버 망 이름</label>
+                    <input id="project-net-name" name="name" type="text" value="{{ architecture_form.name }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="망 이름을 입력해 주세요">
+                  </div>
+                  <div class="space-y-2">
+                    <label for="project-net-purpose" class="block text-sm font-medium text-slate-900">서버 망 목적</label>
+                    <input id="project-net-purpose" name="purpose" type="text" value="{{ architecture_form.purpose }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="망 목적을 입력해 주세요">
+                  </div>
+                  <div class="space-y-2">
+                    <label for="project-net-middleware" class="block text-sm font-medium text-slate-900">미들웨어 기술 스택</label>
+                    <input id="project-net-middleware" name="middleware_stack" type="text" value="{{ architecture_form.middleware_stack }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="기술 스택을 입력해 주세요">
+                  </div>
+                  <div class="space-y-2">
+                    <label for="project-net-firewall" class="block text-sm font-medium text-slate-900">방화벽 설정</label>
+                    <input id="project-net-firewall" name="firewall_settings" type="text" value="{{ architecture_form.firewall_settings }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="방화벽 설정을 입력해 주세요">
+                  </div>
+                  <div class="space-y-2">
+                    <label for="project-net-auth" class="block text-sm font-medium text-slate-900">보안 인증 방법</label>
+                    <input id="project-net-auth" name="auth_method" type="text" value="{{ architecture_form.auth_method }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="보안 인증 방법을 입력해 주세요">
+                  </div>
+                  <div class="space-y-2">
+                    <label for="project-net-expected" class="block text-sm font-medium text-slate-900">예상 동시 접속자 수</label>
+                    <input id="project-net-expected" name="expected_concurrent_users" type="text" value="{{ architecture_form.expected_concurrent_users }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예상 동시 접속자 수를 입력해 주세요">
+                  </div>
+                  <div class="space-y-2 md:col-span-2">
+                    <label for="project-net-hardware" class="block text-sm font-medium text-slate-900">서버 하드웨어 사양</label>
+                    <input id="project-net-hardware" name="hardware_spec" type="text" value="{{ architecture_form.hardware_spec }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="서버 하드웨어 사양을 입력해 주세요">
                   </div>
                 </div>
-              {% endfor %}
+
+                <div class="space-y-2">
+                  <label for="project-net-remarks" class="block text-sm font-medium text-slate-900">추가 입력란</label>
+                  <textarea id="project-net-remarks" name="remarks" rows="5" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="추가 사항을 입력해 주세요">{{ architecture_form.remarks }}</textarea>
+                </div>
+
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                  <label class="inline-flex items-center gap-3 text-sm font-medium text-slate-900">
+                    <span>망 분리 여부</span>
+                    <input type="checkbox" name="cloud_yn" value="Y" class="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" {% if architecture_form.cloud_yn == "Y" %}checked{% endif %}>
+                  </label>
+                  <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                    서버 망 추가
+                  </button>
+                </div>
+              </form>
+            </section>
+          {% endif %}
+
+          {% if architecture_networks %}
+            <div class="pl-1">
+              {% if not open_arch_form %}
+                <a href="?docs_cd={{ selected_document_code }}&resume=1&arch_form=1" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                  서버 정보 추가
+                </a>
+              {% endif %}
             </div>
-          </div>
+
+            <div class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div class="rounded-[1.5rem] bg-slate-200/80 p-5">
+                <div class="space-y-3">
+                  {% for network in architecture_networks %}
+                    <div class="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                      <div class="min-w-0">
+                        <p class="truncate text-sm font-medium text-slate-900">{{ network.name }}</p>
+                      </div>
+                      <form method="post" class="shrink-0">
+                        {% csrf_token %}
+                        <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+                        <input type="hidden" name="action" value="delete_project_net">
+                        <input type="hidden" name="project_net_sn" value="{{ network.sn }}">
+                        <button type="submit" class="text-2xl leading-none text-slate-400 transition hover:text-slate-700" aria-label="서버 정보 제거">
+                          &times;
+                        </button>
+                      </form>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          {% endif %}
         {% endif %}
 
-        {% if has_selected_files and current_document_code and not current_draft %}
-          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-            선택한 파일을 바탕으로 {{ current_document_label }} 생성을 시작할 수 있습니다.
-          </div>
+        {% if can_start_current_generation %}
           <div class="pl-1">
             <form method="post" class="inline-flex">
               {% csrf_token %}
               {% for selected_file in selected_files %}
                 <input type="hidden" name="selected_files" value="{{ selected_file.sn }}">
               {% endfor %}
-              <input type="hidden" name="docs_cd" value="{{ current_document_code }}">
+              <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
               <input type="hidden" name="action" value="start_current">
               <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700">
-                {{ current_document_label }} 생성
+                {{ start_button_label }}
               </button>
             </form>
           </div>
         {% endif %}
 
         {% if show_generation_sequence %}
-          <div
-            data-doc-generation-root
-            data-doc-generation-steps="{{ generation_steps|join:'||' }}"
-            class="space-y-4"
-          >
+          <div data-doc-generation-root data-doc-generation-steps="{{ generation_steps|join:'||' }}" class="space-y-4">
             <div class="space-y-4" data-doc-generation-messages></div>
             <div class="hidden space-y-4" data-doc-generation-complete>
               <div class="max-w-3xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
@@ -164,7 +333,7 @@
               </select>
             </div>
             <div>
-              <input type="text" name="q" value="{{ query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="검색어를 입력해 주세요.">
+              <input type="text" name="q" value="{{ query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="검색어를 입력해 주세요">
             </div>
             <button type="submit" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
               검색

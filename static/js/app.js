@@ -30,6 +30,10 @@
     return document.getElementById("app-confirm-root");
   }
 
+  function getNoticeRoot() {
+    return document.getElementById("app-notice-root");
+  }
+
   function getConfirmTitle() {
     return document.querySelector("[data-confirm-title]");
   }
@@ -40,6 +44,18 @@
 
   function getConfirmSubmitButton() {
     return document.querySelector("[data-confirm-submit]");
+  }
+
+  function getNoticeTitle() {
+    return document.querySelector("[data-notice-title]");
+  }
+
+  function getNoticeMessage() {
+    return document.querySelector("[data-notice-message]");
+  }
+
+  function getNoticeSubmitButton() {
+    return document.querySelector("[data-notice-submit]");
   }
 
   function applyAlertStyles(alertNode, iconNode, level) {
@@ -98,6 +114,7 @@
   }
 
   let confirmResolver = null;
+  let noticeResolver = null;
 
   function setConfirmTone(button, tone) {
     if (!button) return;
@@ -115,6 +132,14 @@
     confirmResolver = null;
     hideModal(getConfirmRoot());
     resolver(result);
+  }
+
+  function resolveNotice() {
+    if (!noticeResolver) return;
+    const resolver = noticeResolver;
+    noticeResolver = null;
+    hideModal(getNoticeRoot());
+    resolver();
   }
 
   function showConfirmDialog({
@@ -146,6 +171,31 @@
     });
   }
 
+  function showNoticeDialog({
+    title = "안내",
+    message = "",
+    buttonText = "확인",
+  }) {
+    const root = getNoticeRoot();
+    const titleNode = getNoticeTitle();
+    const messageNode = getNoticeMessage();
+    const submitButton = getNoticeSubmitButton();
+    if (!root || !titleNode || !messageNode || !submitButton) {
+      showAppAlert(message || title, "info");
+      return Promise.resolve();
+    }
+
+    titleNode.textContent = title;
+    messageNode.textContent = message;
+    submitButton.textContent = buttonText;
+    showModal(root);
+
+    return new Promise((resolve) => {
+      noticeResolver = resolve;
+      submitButton.focus();
+    });
+  }
+
   function resubmitForm(form, submitter) {
     if (!form) return;
     form.dataset.skipConfirm = "true";
@@ -166,6 +216,30 @@
     sidebar.classList.toggle("-translate-x-full");
   }
 
+  function openItfFileDialog() {
+    const input = document.querySelector("[data-itf-file-input]");
+    if (!input) return;
+    input.click();
+  }
+
+  function submitItfUpload(fileList) {
+    const form = document.querySelector("[data-itf-upload-form]");
+    const input = document.querySelector("[data-itf-file-input]");
+    if (!form || !input || !fileList || fileList.length === 0) return;
+    input.files = fileList;
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+      return;
+    }
+    form.submit();
+  }
+
+  function openProfilePage(trigger) {
+    const profileUrl = trigger?.dataset.profileUrl;
+    if (!profileUrl) return;
+    window.location.assign(profileUrl);
+  }
+
   function populateUserDetail(row) {
     const modal = document.getElementById("user-detail-modal");
     if (!modal) return;
@@ -175,11 +249,13 @@
       if (field) field.value = value ?? "";
     };
 
+    setValue("#user-detail-sn", row.dataset.userSn);
     setValue("#user-detail-id", row.dataset.userId);
     setValue("#user-detail-name", row.dataset.userName);
     setValue("#user-detail-department", row.dataset.userDepartment);
     setValue("#user-detail-position", row.dataset.userPosition);
     setValue("#user-detail-active", row.dataset.userUseYn);
+    setValue("#user-detail-temp-password-yn", row.dataset.userTempPasswordYn);
   }
 
   function getProjectSearchModal() {
@@ -744,6 +820,12 @@
   }
 
   document.addEventListener("click", function (event) {
+    const profileTrigger = event.target.closest("[data-profile-url]");
+    if (profileTrigger && !event.target.closest("form, button, a, input, select, textarea, label")) {
+      openProfilePage(profileTrigger);
+      return;
+    }
+
     const projectSearchTrigger = event.target.closest("[data-project-open-search]");
     if (projectSearchTrigger) {
       openProjectUserSearch(projectSearchTrigger.dataset.projectOpenSearch);
@@ -753,6 +835,12 @@
     const docSelectTrigger = event.target.closest("[data-doc-upload-select]");
     if (docSelectTrigger) {
       openDocFileDialog(docSelectTrigger.dataset.docUploadSelect);
+      return;
+    }
+
+    const itfSelectTrigger = event.target.closest("[data-itf-upload-select]");
+    if (itfSelectTrigger) {
+      openItfFileDialog();
       return;
     }
 
@@ -782,6 +870,12 @@
       return;
     }
 
+    const noticeSubmit = event.target.closest("[data-notice-submit]");
+    if (noticeSubmit) {
+      resolveNotice();
+      return;
+    }
+
     const confirmCancel = event.target.closest("[data-confirm-cancel]");
     if (confirmCancel) {
       resolveConfirm(false);
@@ -807,6 +901,10 @@
         resolveConfirm(false);
         return;
       }
+      if (modal?.dataset.noticeRoot !== undefined) {
+        resolveNotice();
+        return;
+      }
       hideModal(modal);
       return;
     }
@@ -826,6 +924,10 @@
     if (event.target.matches("[data-modal-root]")) {
       if (event.target.dataset.confirmRoot !== undefined) {
         resolveConfirm(false);
+        return;
+      }
+      if (event.target.dataset.noticeRoot !== undefined) {
+        resolveNotice();
         return;
       }
       hideModal(event.target);
@@ -851,6 +953,12 @@
       return;
     }
 
+    const itfInput = event.target.closest("[data-itf-file-input]");
+    if (itfInput) {
+      submitItfUpload(itfInput.files);
+      return;
+    }
+
     const selectAll = event.target.closest("[data-docs-select-all]");
     if (selectAll) {
       syncDocsSelectAll(selectAll);
@@ -859,24 +967,46 @@
 
   document.addEventListener("dragover", function (event) {
     const zone = event.target.closest("[data-doc-drop-zone]");
-    if (!zone) return;
+    if (zone) {
+      event.preventDefault();
+      zone.classList.add("border-blue-300", "bg-blue-50");
+      return;
+    }
+
+    const itfZone = event.target.closest("[data-itf-drop-zone]");
+    if (!itfZone) return;
     event.preventDefault();
-    zone.classList.add("border-blue-300", "bg-blue-50");
+    itfZone.classList.add("border-blue-300", "bg-blue-50");
   });
 
   document.addEventListener("dragleave", function (event) {
     const zone = event.target.closest("[data-doc-drop-zone]");
-    if (!zone) return;
-    if (zone.contains(event.relatedTarget)) return;
-    zone.classList.remove("border-blue-300", "bg-blue-50");
+    if (zone) {
+      if (zone.contains(event.relatedTarget)) return;
+      zone.classList.remove("border-blue-300", "bg-blue-50");
+      return;
+    }
+
+    const itfZone = event.target.closest("[data-itf-drop-zone]");
+    if (!itfZone) return;
+    if (itfZone.contains(event.relatedTarget)) return;
+    itfZone.classList.remove("border-blue-300", "bg-blue-50");
   });
 
   document.addEventListener("drop", function (event) {
     const zone = event.target.closest("[data-doc-drop-zone]");
-    if (!zone) return;
+    if (zone) {
+      event.preventDefault();
+      zone.classList.remove("border-blue-300", "bg-blue-50");
+      addDocFiles(zone.dataset.docDropZone, event.dataTransfer?.files);
+      return;
+    }
+
+    const itfZone = event.target.closest("[data-itf-drop-zone]");
+    if (!itfZone) return;
     event.preventDefault();
-    zone.classList.remove("border-blue-300", "bg-blue-50");
-    addDocFiles(zone.dataset.docDropZone, event.dataTransfer?.files);
+    itfZone.classList.remove("border-blue-300", "bg-blue-50");
+    submitItfUpload(event.dataTransfer?.files);
   });
 
   document.addEventListener("submit", async function (event) {
@@ -934,6 +1064,22 @@
       return;
     }
 
+    const confirmForm = event.target.closest("[data-confirm-form]");
+    if (confirmForm) {
+      event.preventDefault();
+      const confirmed = await showConfirmDialog({
+        title: confirmForm.dataset.confirmTitle || "확인",
+        message: confirmForm.dataset.confirmMessage || "",
+        confirmText: confirmForm.dataset.confirmText || "확인",
+        cancelText: confirmForm.dataset.cancelText || "취소",
+        tone: confirmForm.dataset.confirmTone || "primary",
+      });
+      if (confirmed) {
+        resubmitForm(confirmForm, event.submitter);
+      }
+      return;
+    }
+
     const projectForm = event.target.closest("[data-project-create-form]");
     if (!projectForm) return;
 
@@ -968,10 +1114,22 @@
   });
 
   document.addEventListener("keydown", function (event) {
+    const profileTrigger = event.target.closest("[data-profile-url]");
+    if (profileTrigger && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      openProfilePage(profileTrigger);
+      return;
+    }
+
     if (event.key !== "Escape") return;
     const confirmRoot = getConfirmRoot();
     if (confirmRoot?.classList.contains("flex")) {
       resolveConfirm(false);
+      return;
+    }
+    const noticeRoot = getNoticeRoot();
+    if (noticeRoot?.classList.contains("flex")) {
+      resolveNotice();
       return;
     }
     document.querySelectorAll("[data-modal-root].flex").forEach(hideModal);
@@ -989,6 +1147,20 @@
 
   if (document.querySelector("[data-modal-root].flex")) {
     document.body.classList.add("overflow-hidden");
+  }
+
+  const autoNoticeTrigger = document.querySelector("[data-auto-notice]");
+  if (autoNoticeTrigger) {
+    showNoticeDialog({
+      title: autoNoticeTrigger.dataset.noticeTitle || "안내",
+      message: autoNoticeTrigger.dataset.noticeMessage || "",
+      buttonText: autoNoticeTrigger.dataset.noticeButtonText || "확인",
+    }).then(() => {
+      const redirectUrl = autoNoticeTrigger.dataset.noticeRedirectUrl;
+      if (redirectUrl) {
+        window.location.replace(redirectUrl);
+      }
+    });
   }
 
   syncAllProjectRoles();

@@ -37,20 +37,22 @@
     </div>
 
     <nav class="flex-1 space-y-2 px-3 py-4">
-      <a href="{% url 'user_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'users' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
-        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M10 10.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.6"/>
-          <path d="M4 16.5c0-2.8 2.7-4.5 6-4.5s6 1.7 6 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-        </svg>
-        <span>사용자 관리</span>
-      </a>
+      {% if request.user.is_staff %}
+        <a href="{% url 'user_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'users' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M10 10.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.6"/>
+            <path d="M4 16.5c0-2.8 2.7-4.5 6-4.5s6 1.7 6 4.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <span>사용자 관리</span>
+        </a>
 
-      <a href="{% url 'project_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'projects' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
-        <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M3.5 6.5a2 2 0 0 1 2-2h2l1.8 1.8h7.2a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
-        </svg>
-        <span>프로젝트 관리</span>
-      </a>
+        <a href="{% url 'project_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'projects' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M3.5 6.5a2 2 0 0 1 2-2h2l1.8 1.8h7.2a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+          <span>프로젝트 관리</span>
+        </a>
+      {% endif %}
 
       <a href="{% url 'file_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'files' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
         <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -73,7 +75,7 @@
       </a>
 
       <a href="{% url 'doc_history_list' %}?docs_cd=DOC_ERD" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_ERD' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
-        <span>엔티티 관계 모형 설계서</span>
+        <span>엔티티 관계 모델 설계서</span>
       </a>
 
       <a href="{% url 'doc_history_list' %}?docs_cd=DOC_DB" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_DB' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
@@ -81,16 +83,16 @@
       </a>
 
       <a href="{% url 'doc_history_list' %}?docs_cd=DOC_TS" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'doc_history' and selected_document_code == 'DOC_TS' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
-        <span>통합 시험 시나리오</span>
+        <span>통합 테스트 시나리오</span>
       </a>
 
       <a href="{% url 'doc_approval_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'approvals' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
-        <span>산출물 승인요청</span>
+        <span>산출물 확인요청</span>
       </a>
     </nav>
 
     <div class="border-t border-slate-200 p-4">
-      <div class="flex items-center justify-between">
+      <div data-profile-url="{% url 'user_profile' %}" class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-blue-200 hover:bg-blue-50 hover:shadow-sm focus-within:border-blue-200 focus-within:bg-blue-50" role="link" tabindex="0">
         <div>
           <p class="text-sm font-semibold text-slate-900">{% firstof request.user.name request.user.user_id "admin" %}</p>
           <p class="text-xs text-slate-500">{% firstof request.user.user_id "" %}</p>

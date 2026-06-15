@@ -1,8 +1,12 @@
 import io
 import json
+import os
+import tempfile
 import time
+from pathlib import Path
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from django.conf import settings
 from django.db import transaction
@@ -14,7 +18,7 @@ from docx import Document as DocxDocument
 from common.models import Code, ProjectFile
 from common.onlyoffice import decode_jwt, encode_jwt
 from common.project_selection import get_request_user
-from projects.models import ProjectUserRole
+from projects.models import ProjectNet, ProjectUserRole
 
 from .models import Document, DocumentApproval, DocumentDetail
 
@@ -24,11 +28,131 @@ APPROVAL_STATUS_SEQUENCE = ("APRV_REQ", "APRV_COM", "APRV_RJT")
 PROJECT_ROLE_CODES = ("ROLE_MANAGER", "ROLE_MEMBER")
 GENERATION_SESSION_KEY = "docs_initial_generation"
 ALLOWED_GENERATION_FILE_CODES = ("FILE_RFP", "FILE_MEETING")
+INTERFACE_REFERENCE_DOCUMENT_CODE = "DOC_ITF"
+ARCHITECTURE_DOCUMENT_CODE = "DOC_ARCH"
+INTERFACE_REFERENCE_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
+INTERFACE_REFERENCE_MAX_FILE_SIZE = 3 * 1024 * 1024
 
 
 def next_sn(model):
     current_max = model.objects.aggregate(max_sn=Max("sn"))["max_sn"] or 0
     return current_max + 1
+
+
+def _build_empty_generation_state(project):
+    return {
+        "project_sn": project.sn if project else None,
+        "selected_file_ids": [],
+        "draft_documents": {},
+        "confirmed_documents": {},
+        "itf_reference_files": [],
+    }
+
+
+def _get_itf_reference_root():
+    configured_root = getattr(settings, "ALPLED_ITF_REFERENCE_ROOT", None)
+    root = Path(configured_root) if configured_root else Path(tempfile.gettempdir()) / "alpled_web" / "itf_references"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _get_itf_reference_directory(project, actor):
+    project_key = getattr(project, "sn", "none")
+    actor_key = getattr(actor, "sn", "anonymous")
+    directory = _get_itf_reference_root() / f"project_{project_key}" / f"user_{actor_key}"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _normalize_reference_filename(filename):
+    return Path(filename or "").name or "reference"
+
+
+def cleanup_generation_itf_reference(reference):
+    path_value = (reference or {}).get("path", "")
+    if not path_value:
+        return
+    path = Path(path_value)
+    for _ in range(3):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            try:
+                os.chmod(path, 0o666)
+            except OSError:
+                pass
+            time.sleep(0.05)
+        except OSError:
+            return
+
+
+def cleanup_generation_itf_references(state):
+    for reference in state.get("itf_reference_files", []):
+        cleanup_generation_itf_reference(reference)
+
+
+def get_generation_itf_references(state):
+    return list(state.get("itf_reference_files", []))
+
+
+def add_generation_itf_references(project, actor, state, uploaded_files):
+    references = state.setdefault("itf_reference_files", [])
+    upload_directory = _get_itf_reference_directory(project, actor)
+    added_count = 0
+    errors = []
+
+    for uploaded_file in uploaded_files:
+        if uploaded_file is None or not getattr(uploaded_file, "name", ""):
+            continue
+
+        filename = _normalize_reference_filename(uploaded_file.name)
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if extension not in INTERFACE_REFERENCE_ALLOWED_EXTENSIONS:
+            errors.append("png, jpg, jpeg 이미지 파일만 업로드할 수 있습니다.")
+            continue
+        if uploaded_file.size > INTERFACE_REFERENCE_MAX_FILE_SIZE:
+            errors.append("각 이미지는 3MB 이하만 업로드할 수 있습니다.")
+            continue
+
+        token = uuid4().hex
+        file_path = upload_directory / f"{token}.{extension}"
+        with file_path.open("wb") as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+
+        references.append(
+            {
+                "token": token,
+                "name": filename,
+                "size": uploaded_file.size,
+                "extension": extension,
+                "path": str(file_path),
+            }
+        )
+        added_count += 1
+
+    state["itf_reference_files"] = references
+    return added_count, errors
+
+
+def remove_generation_itf_reference(state, token):
+    if not token:
+        return False
+
+    remaining_references = []
+    removed = False
+    for reference in state.get("itf_reference_files", []):
+        if reference.get("token") == token:
+            cleanup_generation_itf_reference(reference)
+            removed = True
+            continue
+        remaining_references.append(reference)
+
+    state["itf_reference_files"] = remaining_references
+    return removed
 
 
 def _get_ordered_codes(code_values):
@@ -260,7 +384,15 @@ def can_start_initial_generation(project, user):
 
 
 def has_active_generation_session(state):
-    return bool(state.get("selected_file_ids")) and not is_generation_complete(state)
+    return (
+        bool(
+            state.get("selected_file_ids")
+            or state.get("draft_documents")
+            or state.get("confirmed_documents")
+            or state.get("itf_reference_files")
+        )
+        and not is_generation_complete(state)
+    )
 
 
 def can_access_initial_generation(project, user, state):
@@ -269,14 +401,30 @@ def can_access_initial_generation(project, user, state):
     return has_active_generation_session(state) or not has_any_confirmed_initial_document(project)
 
 
-def build_generation_lines(project, document_code, files):
+def build_generation_lines(project, document_code, inputs):
     label = get_document_label(document_code)
-    rows = [
-        f"{project.name} 프로젝트의 {label} 초안입니다.",
-        "아래 선택한 문서를 기준으로 더미 자동 생성 결과를 구성했습니다.",
-    ]
-    for project_file in files:
-        rows.append(f"- {project_file.name} ({project_file.file_type.name})")
+    if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE:
+        rows = [
+            f"{project.name} 프로젝트의 {label} 초안입니다.",
+            "아래 업로드한 UI 참고 이미지를 기준으로 더미 자동 생성 결과를 구성했습니다.",
+        ]
+        for reference in inputs:
+            rows.append(f"- {reference.get('name', '이미지 파일')}")
+    elif document_code == ARCHITECTURE_DOCUMENT_CODE:
+        rows = [
+            f"{project.name} 프로젝트의 {label} 초안입니다.",
+            "아래 등록된 서버 정보를 기준으로 더미 자동 생성 결과를 구성했습니다.",
+        ]
+        for project_net in inputs:
+            description = project_net.purpose or "목적 미입력"
+            rows.append(f"- {project_net.name} ({description})")
+    else:
+        rows = [
+            f"{project.name} 프로젝트의 {label} 초안입니다.",
+            "아래 선택한 문서를 기준으로 더미 자동 생성 결과를 구성했습니다.",
+        ]
+        for project_file in inputs:
+            rows.append(f"- {project_file.name} ({project_file.file_type.name})")
 
     previous_document_code = get_previous_document_code(document_code)
     if previous_document_code:
@@ -318,9 +466,9 @@ def create_document_with_detail(
     return document, detail
 
 
-def create_draft_document(project, document_code, actor, selected_files):
+def create_draft_document(project, document_code, actor, source_inputs):
     label = get_document_label(document_code)
-    content_bytes = build_docx_bytes(label, build_generation_lines(project, document_code, selected_files))
+    content_bytes = build_docx_bytes(label, build_generation_lines(project, document_code, source_inputs))
     return create_document_with_detail(
         project=project,
         document_code=document_code,
@@ -485,22 +633,17 @@ def reject_request(approval, actor, reason):
     approval.save(update_fields=["approval_status", "rejection_reason", "updated_by", "updated_at"])
 
 
-def _build_empty_generation_state(project):
-    return {
-        "project_sn": project.sn if project else None,
-        "selected_file_ids": [],
-        "draft_documents": {},
-        "confirmed_documents": {},
-    }
-
-
 def get_generation_state(session, project):
     state = session.get(GENERATION_SESSION_KEY)
-    if not state or state.get("project_sn") != getattr(project, "sn", None):
+    if not state:
+        return _build_empty_generation_state(project)
+    if state.get("project_sn") != getattr(project, "sn", None):
+        clear_generation_state(session)
         return _build_empty_generation_state(project)
     state.setdefault("selected_file_ids", [])
     state.setdefault("draft_documents", {})
     state.setdefault("confirmed_documents", {})
+    state.setdefault("itf_reference_files", [])
     return state
 
 
@@ -512,14 +655,18 @@ def save_generation_state(session, state):
 def clear_generation_state(session, project=None):
     state = session.get(GENERATION_SESSION_KEY)
     if project is None or not state or state.get("project_sn") == getattr(project, "sn", None):
+        if state:
+            cleanup_generation_itf_references(state)
         session.pop(GENERATION_SESSION_KEY, None)
         session.modified = True
 
 
 def update_generation_selected_files(state, file_ids):
+    cleanup_generation_itf_references(state)
     state["selected_file_ids"] = [str(file_id) for file_id in file_ids if str(file_id).strip()]
     state["draft_documents"] = {}
     state["confirmed_documents"] = {}
+    state["itf_reference_files"] = []
     return state
 
 
@@ -531,6 +678,30 @@ def get_generation_selected_files(project, state):
             allowed_types=ALLOWED_GENERATION_FILE_CODES,
         )
     )
+
+
+def get_project_nets(project):
+    if project is None:
+        return []
+    return list(ProjectNet.objects.filter(project=project).order_by("sn"))
+
+
+def get_generation_source_inputs(project, state, document_code):
+    if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE:
+        return get_generation_itf_references(state)
+    if document_code == ARCHITECTURE_DOCUMENT_CODE:
+        return get_project_nets(project)
+    return get_generation_selected_files(project, state)
+
+
+def get_generation_prerequisite_error(project, state, document_code):
+    if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE and not get_generation_itf_references(state):
+        return "사용자 인터페이스 참고 이미지를 하나 이상 업로드해 주세요."
+    if document_code == ARCHITECTURE_DOCUMENT_CODE and not get_project_nets(project):
+        return "서버 정보를 하나 이상 추가해 주세요."
+    if document_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE} and not get_generation_selected_files(project, state):
+        return "생성에 사용할 문서를 먼저 선택해 주세요."
+    return None
 
 
 def get_current_generation_code(state):
@@ -592,11 +763,11 @@ def ensure_generation_draft(project, actor, state):
         if existing_document is not None:
             return existing_document, False
 
-    selected_files = get_generation_selected_files(project, state)
-    if not selected_files:
+    source_inputs = get_generation_source_inputs(project, state, document_code)
+    if not source_inputs:
         return None, False
 
-    draft_document, _ = create_draft_document(project, document_code, actor, selected_files)
+    draft_document, _ = create_draft_document(project, document_code, actor, source_inputs)
     state.setdefault("draft_documents", {})[document_code] = draft_document.sn
     return draft_document, True
 
@@ -652,6 +823,38 @@ def build_generation_steps(document_code):
         "초안 구조를 정리하고 있습니다.",
         f"{label} 초안이 준비되었습니다. 확인 버튼으로 결과를 검토해 주세요.",
     ]
+
+
+@transaction.atomic
+def create_project_net(
+    *,
+    project,
+    actor,
+    name,
+    purpose="",
+    middleware_stack="",
+    firewall_settings="",
+    auth_method="",
+    expected_concurrent_users=None,
+    cloud_yn=None,
+    hardware_spec="",
+    remarks="",
+):
+    return ProjectNet.objects.create(
+        sn=next_sn(ProjectNet),
+        project=project,
+        name=name,
+        purpose=purpose or None,
+        middleware_stack=middleware_stack or None,
+        firewall_settings=firewall_settings or None,
+        auth_method=auth_method or None,
+        expected_concurrent_users=expected_concurrent_users,
+        cloud_yn=cloud_yn,
+        hardware_spec=hardware_spec or None,
+        remarks=remarks or None,
+        created_by=actor,
+        updated_by=actor,
+    )
 
 
 def get_document_view_state(document, actor, preferred_mode="view"):

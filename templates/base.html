@@ -15,6 +15,7 @@
 <body class="bg-slate-100 text-slate-900 antialiased">
   {% include "components/alert.html" with register_only=True %}
   {% include "components/confirm.html" with register_only=True %}
+  {% include "components/notice.html" with register_only=True %}
   {% if request.user.is_authenticated %}
     {% include "components/sidebar.html" %}
   {% endif %}

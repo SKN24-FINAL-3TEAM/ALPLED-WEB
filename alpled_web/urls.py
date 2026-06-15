@@ -42,12 +42,14 @@ from docs.views import (
 )
 from files.views import file_list
 from projects.views import project_list
-from users.views import login_view, logout_view, user_list
+from users.views import login_view, logout_view, temp_password_notice, user_list, user_profile
 
 urlpatterns = [
     path("", login_view, name="home"),
     path("login/", login_view, name="login"),
     path("logout/", logout_view, name="logout"),
+    path("users/profile/", user_profile, name="user_profile"),
+    path("users/profile/notice/", temp_password_notice, name="temp_password_notice"),
     path("users/", user_list, name="user_list"),
     path("projects/", project_list, name="project_list"),
     path("files/", file_list, name="file_list"),

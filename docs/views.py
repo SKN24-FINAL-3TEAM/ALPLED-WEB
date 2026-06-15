@@ -10,6 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from common.project_selection import resolve_current_project
 from common.signals import ensure_initial_reference_data
+from common.models import YesNoChoices
 from files.services import (
     SEARCH_FIELD_CHOICES,
     apply_file_filters,
@@ -19,7 +20,10 @@ from files.services import (
 
 from .models import Document, DocumentApproval
 from .services import (
+    ARCHITECTURE_DOCUMENT_CODE,
+    INTERFACE_REFERENCE_DOCUMENT_CODE,
     acquire_document_lock,
+    add_generation_itf_references,
     apply_approval_filters,
     apply_meeting_notes,
     approve_request,
@@ -37,6 +41,7 @@ from .services import (
     cancel_approval_request,
     clear_generation_state,
     confirm_document,
+    create_project_net,
     create_approval_request,
     download_remote_content,
     ensure_generation_draft,
@@ -53,9 +58,13 @@ from .services import (
     get_generation_progress_rows,
     get_generation_selected_files,
     get_generation_state,
+    get_generation_itf_references,
+    get_generation_prerequisite_error,
     get_latest_detail,
     get_project_files,
+    get_project_nets,
     has_document_version,
+    has_active_generation_session,
     is_generation_complete,
     is_project_manager,
     is_project_participant,
@@ -72,6 +81,7 @@ from .services import (
     update_generation_selected_files,
     validate_document_content_token,
     wait_for_new_revision,
+    remove_generation_itf_reference,
 )
 
 
@@ -144,15 +154,6 @@ def _is_generation_resume_request(request):
     return request.GET.get("resume") == "1"
 
 
-def _build_empty_generation_state(current_project):
-    return {
-        "project_sn": current_project.sn if current_project else None,
-        "selected_file_ids": [],
-        "draft_documents": {},
-        "confirmed_documents": {},
-    }
-
-
 def _get_generation_context(request, current_project, actor, document_code, state=None):
     state = state or get_generation_state(request.session, current_project)
     selected_files = get_generation_selected_files(current_project, state)
@@ -198,6 +199,73 @@ def _get_generation_context(request, current_project, actor, document_code, stat
     }, None
 
 
+def _build_architecture_form_data(request=None):
+    source = request.POST if request is not None else {}
+    return {
+        "name": source.get("name", "").strip(),
+        "purpose": source.get("purpose", "").strip(),
+        "middleware_stack": source.get("middleware_stack", "").strip(),
+        "firewall_settings": source.get("firewall_settings", "").strip(),
+        "auth_method": source.get("auth_method", "").strip(),
+        "expected_concurrent_users": source.get("expected_concurrent_users", "").strip(),
+        "cloud_yn": YesNoChoices.YES if source.get("cloud_yn") == YesNoChoices.YES else YesNoChoices.NO,
+        "hardware_spec": source.get("hardware_spec", "").strip(),
+        "remarks": source.get("remarks", "").strip(),
+    }
+
+
+def _build_generation_redirect(document_code, *, resume=True, play=False, auto_start=False, modal=None, arch_form=False):
+    base_url = build_generation_redirect_url(
+        document_code=document_code,
+        play=play,
+        auto_start=auto_start,
+        resume=resume,
+    )
+    extra_query = []
+    if modal:
+        extra_query.append(("modal", modal))
+    if arch_form:
+        extra_query.append(("arch_form", "1"))
+    if not extra_query:
+        return base_url
+    separator = "&" if "?" in base_url else "?"
+    return f"{base_url}{separator}{urlencode(extra_query)}"
+
+
+def _create_project_net_from_request(request, current_project, actor):
+    form_data = _build_architecture_form_data(request)
+    if current_project is None:
+        messages.error(request, "현재 선택된 프로젝트가 없습니다.")
+        return False, form_data
+    if not form_data["name"]:
+        messages.error(request, "서버 망 이름을 입력해 주세요.")
+        return False, form_data
+
+    expected_concurrent_users = None
+    if form_data["expected_concurrent_users"]:
+        try:
+            expected_concurrent_users = int(form_data["expected_concurrent_users"])
+        except ValueError:
+            messages.error(request, "예상 동시 접속자 수는 숫자로 입력해 주세요.")
+            return False, form_data
+
+    create_project_net(
+        project=current_project,
+        actor=actor,
+        name=form_data["name"],
+        purpose=form_data["purpose"],
+        middleware_stack=form_data["middleware_stack"],
+        firewall_settings=form_data["firewall_settings"],
+        auth_method=form_data["auth_method"],
+        expected_concurrent_users=expected_concurrent_users,
+        cloud_yn=form_data["cloud_yn"],
+        hardware_spec=form_data["hardware_spec"],
+        remarks=form_data["remarks"],
+    )
+    messages.success(request, "서버 정보를 추가했습니다.")
+    return True, _build_architecture_form_data()
+
+
 @login_required(login_url="home")
 def document_history_list(request):
     ensure_initial_reference_data()
@@ -231,17 +299,9 @@ def document_generate(request):
     current_project, _ = resolve_current_project(request)
     actor = get_actor(request)
     document_code = resolve_document_code(request.GET.get("docs_cd") or request.POST.get("docs_cd"))
-
-    is_resume_request = _is_generation_resume_request(request)
-
-    if request.method == "GET" and request.GET.get("apply_selection") != "1" and not is_resume_request:
-        clear_generation_state(request.session, current_project)
-
-    generation_state = (
-        get_generation_state(request.session, current_project)
-        if is_resume_request or request.method != "GET" or request.GET.get("apply_selection") == "1"
-        else _build_empty_generation_state(current_project)
-    )
+    generation_state = get_generation_state(request.session, current_project)
+    architecture_form = _build_architecture_form_data()
+    open_arch_form = request.GET.get("arch_form") == "1"
 
     if not can_access_initial_generation(current_project, actor, generation_state):
         messages.error(request, "현재 프로젝트에서는 최초 산출물 생성을 진행할 수 없습니다.")
@@ -251,20 +311,79 @@ def document_generate(request):
         state = get_generation_state(request.session, current_project)
         update_generation_selected_files(state, request.GET.getlist("selected_files"))
         save_generation_state(request.session, state)
-        return redirect(build_generation_redirect_url(document_code=document_code, resume=True))
+        return redirect(_build_generation_redirect(document_code, resume=True))
 
     if request.method == "POST":
         state = get_generation_state(request.session, current_project)
         action = request.POST.get("action")
+        current_code = get_current_generation_code(state)
+
+        if action == "reset_generation":
+            clear_generation_state(request.session, current_project)
+            messages.success(request, "산출물 생성 진행 상태를 초기화했습니다.")
+            return redirect(build_generation_redirect_url(document_code=document_code, resume=False))
+
+        if action == "upload_itf_reference":
+            if current_code != INTERFACE_REFERENCE_DOCUMENT_CODE:
+                messages.error(request, "현재 단계에서는 이미지 참고자료를 업로드할 수 없습니다.")
+                return redirect(_build_generation_redirect(document_code, resume=True))
+
+            uploaded_files = request.FILES.getlist("itf_references")
+            if not uploaded_files:
+                messages.error(request, "업로드할 이미지 파일을 선택해 주세요.")
+                return redirect(_build_generation_redirect(document_code, resume=True))
+
+            added_count, errors = add_generation_itf_references(current_project, actor, state, uploaded_files)
+            save_generation_state(request.session, state)
+            for error in dict.fromkeys(errors):
+                messages.error(request, error)
+            if added_count:
+                messages.success(request, f"참고 이미지 {added_count}건을 업로드했습니다.")
+            return redirect(_build_generation_redirect(document_code, resume=True))
+
+        if action == "remove_itf_reference":
+            removed = remove_generation_itf_reference(state, request.POST.get("reference_token", ""))
+            save_generation_state(request.session, state)
+            if removed:
+                messages.success(request, "참고 이미지를 제거했습니다.")
+            else:
+                messages.error(request, "제거할 참고 이미지를 찾지 못했습니다.")
+            return redirect(_build_generation_redirect(document_code, resume=True))
+
+        if action == "delete_project_net":
+            if current_code != ARCHITECTURE_DOCUMENT_CODE:
+                messages.error(request, "현재 단계에서는 서버 정보를 삭제할 수 없습니다.")
+                return redirect(_build_generation_redirect(document_code, resume=True))
+            if current_project is None:
+                messages.error(request, "현재 선택된 프로젝트가 없습니다.")
+                return redirect(_build_generation_redirect(document_code, resume=True))
+            project_net = get_object_or_404(current_project.nets.all(), sn=request.POST.get("project_net_sn"))
+            project_net.delete()
+            messages.success(request, "서버 정보를 삭제했습니다.")
+            return redirect(_build_generation_redirect(document_code, resume=True))
+
+        if action == "add_project_net":
+            if current_code != ARCHITECTURE_DOCUMENT_CODE:
+                messages.error(request, "현재 단계에서는 서버 정보를 추가할 수 없습니다.")
+                return redirect(_build_generation_redirect(document_code, resume=True))
+            created, architecture_form = _create_project_net_from_request(request, current_project, actor)
+            open_arch_form = not created
+            if created:
+                return redirect(_build_generation_redirect(document_code, resume=True))
+
         if action == "start_current":
-            update_generation_selected_files(
-                state,
-                request.POST.getlist("selected_files") or state.get("selected_file_ids", []),
-            )
-            selected_files = get_generation_selected_files(current_project, state)
-            if not selected_files:
-                messages.error(request, "생성에 사용할 문서를 먼저 선택해 주세요.")
-                return redirect(f"{build_generation_redirect_url(document_code=document_code, resume=True)}&modal=files")
+            if current_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE}:
+                update_generation_selected_files(
+                    state,
+                    request.POST.getlist("selected_files") or state.get("selected_file_ids", []),
+                )
+
+            prerequisite_error = get_generation_prerequisite_error(current_project, state, current_code)
+            if prerequisite_error:
+                messages.error(request, prerequisite_error)
+                if current_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE}:
+                    return redirect(_build_generation_redirect(document_code, resume=True, modal="files"))
+                return redirect(_build_generation_redirect(document_code, resume=True, arch_form=current_code == ARCHITECTURE_DOCUMENT_CODE))
 
             draft_document, created = ensure_generation_draft(current_project, actor, state)
             save_generation_state(request.session, state)
@@ -273,9 +392,10 @@ def document_generate(request):
                 return redirect(build_generation_redirect_url(document_code=document_code, resume=True))
             if created:
                 messages.success(request, f"{get_document_label(draft_document.document_type_id)} 초안을 생성했습니다.")
-            return redirect(build_generation_redirect_url(document_code=draft_document.document_type_id, play=True, resume=True))
+            return redirect(_build_generation_redirect(draft_document.document_type_id, play=True, resume=True))
 
-        return redirect(build_generation_redirect_url(document_code=document_code, resume=True))
+        if action != "add_project_net":
+            return redirect(_build_generation_redirect(document_code, resume=True))
 
     generation_context, redirect_response = _get_generation_context(
         request,
@@ -287,19 +407,24 @@ def document_generate(request):
     if redirect_response is not None:
         return redirect_response
 
-    if request.method == "GET" and request.GET.get("apply_selection") != "1" and not is_resume_request:
-        generation_context = {
-            **generation_context,
-            "state": generation_state,
-            "selected_files": [],
-            "current_draft": None,
-            "progress_rows": get_generation_progress_rows(generation_state),
-            "is_complete": is_generation_complete(generation_state),
-            "completed_documents": [],
-        }
-
     available_files = get_project_files(current_project, allowed_types=("FILE_RFP", "FILE_MEETING"))
     available_files, file_type, search_field, query = apply_file_filters(request.GET, available_files)
+    current_step_code = generation_context["current_code"]
+    itf_references = get_generation_itf_references(generation_context["state"])
+    architecture_networks = get_project_nets(current_project)
+    can_start_current_generation = False
+    start_button_label = f"{generation_context['current_label']} 생성" if generation_context["current_label"] else "산출물 생성"
+
+    if current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE:
+        can_start_current_generation = bool(itf_references and current_step_code and not generation_context["current_draft"])
+        start_button_label = "사용자 인터페이스 설계서 생성"
+    elif current_step_code == ARCHITECTURE_DOCUMENT_CODE:
+        can_start_current_generation = bool(architecture_networks and current_step_code and not generation_context["current_draft"])
+        start_button_label = "아키텍처 설계서 초안 생성"
+    else:
+        can_start_current_generation = bool(
+            generation_context["selected_files"] and current_step_code and not generation_context["current_draft"]
+        )
 
     context = {
         "active_menu": "doc_history",
@@ -316,6 +441,7 @@ def document_generate(request):
         "selected_files": generation_context["selected_files"],
         "current_document_code": generation_context["current_code"],
         "current_document_label": generation_context["current_label"],
+        "current_step_code": current_step_code,
         "current_draft": generation_context["current_draft"],
         "generation_steps": build_generation_steps(generation_context["current_code"]) if generation_context["current_code"] else [],
         "progress_rows": generation_context["progress_rows"],
@@ -325,6 +451,16 @@ def document_generate(request):
         "is_complete": generation_context["is_complete"],
         "completed_documents": [document for document in generation_context["completed_documents"] if document is not None],
         "has_selected_files": bool(generation_context["selected_files"]),
+        "itf_references": itf_references,
+        "architecture_networks": architecture_networks,
+        "architecture_form": architecture_form,
+        "open_arch_form": open_arch_form,
+        "show_file_selector": current_step_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE},
+        "show_itf_upload": current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE,
+        "show_architecture_inputs": current_step_code == ARCHITECTURE_DOCUMENT_CODE,
+        "can_start_current_generation": can_start_current_generation,
+        "start_button_label": start_button_label,
+        "has_active_generation_session": has_active_generation_session(generation_context["state"]),
     }
     return render(request, "docs/doc_generate.html", context)
 
@@ -557,7 +693,7 @@ def document_confirm(request, document_sn):
             return redirect(f"{reverse('doc_history_list')}?docs_cd={confirmed_document.document_type_id}")
 
         messages.success(request, f"{get_document_label(document.document_type_id)} 확정본을 생성했습니다.")
-        return redirect(build_generation_redirect_url(auto_start=True, resume=True))
+        return redirect(_build_generation_redirect(None, auto_start=True, resume=True))
 
     messages.success(request, "산출물을 확정했습니다.")
     return redirect(reverse("doc_detail", args=[confirmed_document.sn]))

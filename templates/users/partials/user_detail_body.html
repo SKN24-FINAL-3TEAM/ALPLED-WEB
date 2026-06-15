@@ -21,30 +21,37 @@
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">비밀번호</label>
-    <input type="text" value="임시 비밀번호로 초기화" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-400">
+    <form method="post" action="{% url 'user_list' %}" data-confirm-form data-confirm-title="임시 비밀번호 초기화" data-confirm-message="임시 비밀번호로 초기화하시겠습니까?" data-confirm-text="초기화" data-confirm-tone="danger">
+      {% csrf_token %}
+      <input id="user-detail-sn" type="hidden" name="user_sn" value="{{ selected_user.sn }}">
+      <input type="hidden" name="action" value="reset_user_password">
+      <button type="submit" class="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700">
+        임시 비밀번호 초기화
+      </button>
+    </form>
   </div>
 
   <div class="space-y-2">
-    <label class="block text-sm font-medium text-slate-900">활성화 여부</label>
+    <label class="block text-sm font-medium text-slate-900">활성 여부</label>
     <select id="user-detail-active" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
       <option value="Y" {% if selected_user.use_yn == "Y" %}selected{% endif %}>사용</option>
-      <option value="N" {% if selected_user.use_yn == "N" %}selected{% endif %}>비활성</option>
+      <option value="N" {% if selected_user.use_yn == "N" %}selected{% endif %}>비활성화</option>
     </select>
   </div>
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">등록일자</label>
-    <input type="text" value="{{ selected_user.created_at|default:'YYYY-MM-DD HH24:MI:SE' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
+    <input type="text" value="{{ selected_user.created_at|default:'YYYY-MM-DD HH24:MI:SS' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
-    <label class="block text-sm font-medium text-slate-900">임시 비밀번호 수정여부</label>
-    <input type="text" value="수정" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
+    <label class="block text-sm font-medium text-slate-900">임시 비밀번호 여부</label>
+    <input id="user-detail-temp-password-yn" type="text" value="{{ selected_user.tmpr_pswd_yn|default:'N' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">마지막 로그인 일자</label>
-    <input type="text" value="YYYY-MM-DD HH24:MI:SE" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
+    <input type="text" value="YYYY-MM-DD HH24:MI:SS" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
   </div>
 </div>
 
