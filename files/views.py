@@ -29,7 +29,7 @@ from .services import (
 
 MAX_UPLOAD_FILES = 5
 MAX_FILE_SIZE = 10 * 1024 * 1024
-ALLOWED_EXTENSIONS = {"docx", "hwp", "pdf"}
+ALLOWED_EXTENSIONS = {"docx", "pdf"}
 FILE_TYPE_MAP = {
     "rfp_files": "FILE_RFP",
     "meeting_files": "FILE_MEETING",
@@ -49,7 +49,7 @@ def _validate_uploaded_files(files):
     for uploaded_file in files:
         extension = os.path.splitext(uploaded_file.name)[1].lower().lstrip(".")
         if extension not in ALLOWED_EXTENSIONS:
-            return "업로드 가능한 파일 형식은 .docx, .hwp, .pdf 입니다."
+            return "업로드 가능한 파일 형식은 .docx, .pdf 입니다."
         if uploaded_file.size > MAX_FILE_SIZE:
             return f"각 파일은 최대 {MAX_FILE_SIZE // (1024 * 1024)}MB까지 업로드할 수 있습니다."
 

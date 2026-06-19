@@ -2,6 +2,7 @@ import io
 import json
 import os
 import time
+import traceback
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -44,6 +45,36 @@ TERMINAL_PROGRESS_CODES = (PROGRESS_COMPLETED, PROGRESS_FAILED)
 FASTAPI_GENERATE_TIMEOUT_SECONDS = 10
 
 
+def _truncate_log_value(value, *, limit=600):
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...<truncated>"
+
+
+def _debug_generation_log(step, **fields):
+    payload = {"step": step}
+    payload.update(fields)
+    try:
+        message = json.dumps(payload, ensure_ascii=False, default=str)
+    except TypeError:
+        message = _truncate_log_value(payload)
+    print(f"[docs.generate] {message}", flush=True)
+
+
+def _summarize_generation_payload(payload):
+    if not isinstance(payload, dict):
+        return _truncate_log_value(payload)
+    summary = dict(payload)
+    summary["file_list_count"] = len(summary.get("file_list", []) or [])
+    summary["image_list_count"] = len(summary.get("image_list", []) or [])
+    if "file_list" in summary:
+        summary["file_list"] = list(summary.get("file_list", []) or [])
+    if "image_list" in summary:
+        summary["image_list"] = list(summary.get("image_list", []) or [])
+    return summary
+
+
 def _build_empty_generation_state(project):
     return {
         "project_sn": project.sn if project else None,
@@ -62,7 +93,7 @@ def build_itf_reference_storage_key(project, actor, filename):
     project_key = getattr(project, "sn", "none")
     actor_key = getattr(actor, "sn", "anonymous")
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
-    return f"itf-references/{project_key}/{actor_key}/{uuid4().hex}.{extension}"
+    return f"temp/itf/{project_key}/{actor_key}/{uuid4().hex}.{extension}"
 
 
 def _legacy_cleanup_path(path_value):
@@ -500,17 +531,42 @@ def _build_fastapi_generate_url():
 
 
 def request_fastapi_generate(payload):
+    url = _build_fastapi_generate_url()
+    _debug_generation_log(
+        "fastapi_request_prepare",
+        url=url,
+        timeout_seconds=FASTAPI_GENERATE_TIMEOUT_SECONDS,
+        payload=_summarize_generation_payload(payload),
+    )
     request = Request(
-        _build_fastapi_generate_url(),
+        url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urlopen(request, timeout=FASTAPI_GENERATE_TIMEOUT_SECONDS) as response:
-        body = response.read().decode("utf-8") or "{}"
+    try:
+        with urlopen(request, timeout=FASTAPI_GENERATE_TIMEOUT_SECONDS) as response:
+            status_code = getattr(response, "status", None) or response.getcode()
+            body = response.read().decode("utf-8") or "{}"
+    except Exception as exc:
+        _debug_generation_log(
+            "fastapi_request_error",
+            url=url,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        traceback.print_exc()
+        raise
+    _debug_generation_log(
+        "fastapi_response_received",
+        url=url,
+        status_code=status_code,
+        body_preview=_truncate_log_value(body),
+    )
     try:
         return json.loads(body)
     except json.JSONDecodeError:
+        _debug_generation_log("fastapi_response_non_json", url=url)
         return {"raw": body}
 
 
@@ -558,13 +614,11 @@ def build_generation_request_payload(project, state, document_code, *, update_mo
     image_list = get_generation_reference_uris(state) if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE else []
     return {
         "project_sn": project.sn,
-        "docs_cd": "SRS",
-        # "docs_cd": document_code,
+        "docs_cd": document_code,
         "udt_yn": update_mode,
         "file_list": [project_file.sn for project_file in files],
         "image_list": image_list,
-        "etc": {"debug": True},
-        # "etc": {"debug": bool(getattr(settings, "DEBUG", False))},
+        "etc": {"debug": bool(getattr(settings, "DEBUG", False))},
     }
 
 
@@ -649,8 +703,19 @@ def wait_for_document_job(
     timeout_seconds=3,
     interval_seconds=0.25,
 ):
+    _debug_generation_log(
+        "wait_for_document_job_start",
+        project_sn=getattr(project, "sn", None),
+        document_code=document_code,
+        tracking_document_sn=tracking_document_sn,
+        initial_only=initial_only,
+        timeout_seconds=timeout_seconds,
+        interval_seconds=interval_seconds,
+    )
     deadline = time.monotonic() + timeout_seconds
+    attempt = 0
     while time.monotonic() < deadline:
+        attempt += 1
         document = find_document_job(
             project,
             document_code,
@@ -658,14 +723,30 @@ def wait_for_document_job(
             initial_only=initial_only,
         )
         if document is not None:
+            _debug_generation_log(
+                "wait_for_document_job_found",
+                attempt=attempt,
+                document_sn=document.sn,
+                progress_status_id=document.progress_status_id,
+                version=document.version,
+            )
             return document
         time.sleep(interval_seconds)
-    return find_document_job(
+    fallback_document = find_document_job(
         project,
         document_code,
         tracking_document_sn=tracking_document_sn,
         initial_only=initial_only,
     )
+    _debug_generation_log(
+        "wait_for_document_job_end",
+        attempts=attempt,
+        found=bool(fallback_document),
+        document_sn=getattr(fallback_document, "sn", None),
+        progress_status_id=getattr(fallback_document, "progress_status_id", None),
+        version=getattr(fallback_document, "version", None),
+    )
+    return fallback_document
 
 
 def get_running_initial_document(project, document_code, *, tracking_document_sn=None):
@@ -699,40 +780,107 @@ def get_running_history_job(project, document_code):
 
 def start_initial_generation_job(project, actor, state):
     document_code = get_current_generation_code(state)
+    _debug_generation_log(
+        "start_initial_generation_job_enter",
+        project_sn=getattr(project, "sn", None),
+        actor_sn=getattr(actor, "sn", None),
+        document_code=document_code,
+        selected_file_ids=list(state.get("selected_file_ids", []) or []),
+        draft_documents=dict(state.get("draft_documents", {}) or {}),
+        confirmed_documents=dict(state.get("confirmed_documents", {}) or {}),
+        itf_reference_count=len(state.get("itf_reference_files", []) or []),
+    )
     if not document_code:
+        _debug_generation_log("start_initial_generation_job_no_document_code")
         return {"status": "error", "document": None, "message": "생성할 산출물 단계를 찾지 못했습니다."}
 
     running_document = get_running_initial_document(project, document_code)
     if running_document is not None:
+        _debug_generation_log(
+            "start_initial_generation_job_already_running",
+            document_sn=running_document.sn,
+            progress_status_id=running_document.progress_status_id,
+        )
         set_generation_draft_document(state, running_document)
         return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
 
     payload = build_generation_request_payload(project, state, document_code, update_mode="N")
+    _debug_generation_log(
+        "start_initial_generation_job_payload_built",
+        payload=_summarize_generation_payload(payload),
+    )
     try:
-        request_fastapi_generate(payload)
+        fastapi_response = request_fastapi_generate(payload)
+        _debug_generation_log(
+            "start_initial_generation_job_fastapi_accepted",
+            response=_truncate_log_value(fastapi_response),
+        )
     except (HTTPError, URLError, ValueError) as exc:
+        _debug_generation_log(
+            "start_initial_generation_job_fastapi_failed",
+            error_type=type(exc).__name__,
+            error=extract_fastapi_error_message(exc),
+        )
         return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
     tracked_document = wait_for_document_job(project, document_code, initial_only=True)
     if tracked_document is None:
+        _debug_generation_log("start_initial_generation_job_tracking_not_found")
         return {"status": "error", "document": None, "message": "문서 생성 작업을 시작하지 못했습니다."}
 
     set_generation_draft_document(state, tracked_document)
+    _debug_generation_log(
+        "start_initial_generation_job_started",
+        tracked_document_sn=tracked_document.sn,
+        progress_status_id=tracked_document.progress_status_id,
+        version=tracked_document.version,
+    )
     return {"status": "started", "document": tracked_document, "message": "문서 생성을 요청했습니다."}
 
 
 def start_auto_apply_job(project, document_code, selected_files):
+    _debug_generation_log(
+        "start_auto_apply_job_enter",
+        project_sn=getattr(project, "sn", None),
+        document_code=document_code,
+        selected_file_ids=[project_file.sn for project_file in selected_files],
+    )
     running_document = get_running_document(project, document_code)
     if running_document is not None:
+        _debug_generation_log(
+            "start_auto_apply_job_already_running",
+            document_sn=running_document.sn,
+            progress_status_id=running_document.progress_status_id,
+        )
         return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
 
     payload = build_auto_apply_request_payload(project, document_code, selected_files)
+    _debug_generation_log(
+        "start_auto_apply_job_payload_built",
+        payload=_summarize_generation_payload(payload),
+    )
     try:
-        request_fastapi_generate(payload)
+        fastapi_response = request_fastapi_generate(payload)
+        _debug_generation_log(
+            "start_auto_apply_job_fastapi_accepted",
+            response=_truncate_log_value(fastapi_response),
+        )
     except (HTTPError, URLError, ValueError) as exc:
+        _debug_generation_log(
+            "start_auto_apply_job_fastapi_failed",
+            error_type=type(exc).__name__,
+            error=extract_fastapi_error_message(exc),
+        )
         return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
     tracked_document = wait_for_document_job(project, document_code)
     if tracked_document is None:
+        _debug_generation_log("start_auto_apply_job_tracking_not_found")
         return {"status": "error", "document": None, "message": "회의 내용 자동 적용 작업을 시작하지 못했습니다."}
+    _debug_generation_log(
+        "start_auto_apply_job_started",
+        tracked_document_sn=tracked_document.sn,
+        progress_status_id=tracked_document.progress_status_id,
+        version=tracked_document.version,
+    )
     return {"status": "started", "document": tracked_document, "message": "회의 내용 자동 적용을 요청했습니다."}
 
 

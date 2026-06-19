@@ -135,6 +135,38 @@ class FileListViewTests(TestCase):
         self.assertTrue(ProjectFile.objects.filter(file_type=self.meeting_code).exists())
         self.assertTrue(ProjectFile.objects.filter(path__startswith="s3://").exists())
 
+    def test_upload_rejects_hwp_files(self):
+        with self.settings(ALPLED_LOCAL_STORAGE_ROOT=self.temp_dir):
+            response = self.client.post(
+                reverse("file_list"),
+                {
+                    "action": "upload",
+                    "project_sn": self.project.sn,
+                    "rfp_files": [
+                        SimpleUploadedFile(
+                            "proposal.hwp",
+                            b"hwp-content",
+                            content_type="application/x-hwp",
+                        )
+                    ],
+                },
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProjectFile.objects.count(), 0)
+        messages = [message.message for message in response.context["messages"]]
+        self.assertIn("업로드 가능한 파일 형식은 .docx, .pdf 입니다.", messages)
+
+    def test_file_upload_form_lists_docx_and_pdf_only(self):
+        response = self.client.get(reverse("file_list"))
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertIn("허용 파일 형식: .docx, .pdf", content)
+        self.assertIn('accept=".docx,.pdf"', content)
+        self.assertNotIn(".hwp", content)
+
     def test_search_filters_files_by_type_and_name(self):
         ProjectFile.objects.create(
             sn=1,

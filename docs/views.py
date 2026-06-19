@@ -47,6 +47,7 @@ from .services import (
     confirm_document,
     create_project_net,
     create_approval_request,
+    _debug_generation_log,
     download_remote_content,
     extract_text_from_docx,
     find_document_job,
@@ -580,6 +581,18 @@ def document_generate(request):
                 return redirect(_build_generation_redirect(document_code, resume=True))
 
         if action == "start_current":
+            _debug_generation_log(
+                "document_generate_start_current_enter",
+                request_path=request.path,
+                method=request.method,
+                is_ajax=_is_ajax_request(request),
+                project_sn=getattr(current_project, "sn", None),
+                actor_sn=getattr(actor, "sn", None),
+                requested_document_code=document_code,
+                current_code=current_code,
+                posted_selected_file_ids=request.POST.getlist("selected_files"),
+                session_selected_file_ids=list(state.get("selected_file_ids", []) or []),
+            )
             if current_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE}:
                 update_generation_selected_files(
                     state,
@@ -588,6 +601,11 @@ def document_generate(request):
 
             prerequisite_error = get_generation_prerequisite_error(current_project, state, current_code)
             if prerequisite_error:
+                _debug_generation_log(
+                    "document_generate_start_current_prerequisite_error",
+                    current_code=current_code,
+                    error=prerequisite_error,
+                )
                 if _is_ajax_request(request):
                     return JsonResponse({"message": prerequisite_error}, status=400)
                 messages.error(request, prerequisite_error)
@@ -596,6 +614,13 @@ def document_generate(request):
                 return redirect(_build_generation_redirect(document_code, resume=True, arch_form=current_code == ARCHITECTURE_DOCUMENT_CODE))
 
             job_result = start_initial_generation_job(current_project, actor, state)
+            _debug_generation_log(
+                "document_generate_start_current_job_result",
+                current_code=current_code,
+                job_status=job_result.get("status"),
+                document_sn=getattr(job_result.get("document"), "sn", None),
+                message=job_result.get("message"),
+            )
             save_generation_state(request.session, state)
             draft_document = job_result["document"]
             if job_result["status"] == "error" or draft_document is None:

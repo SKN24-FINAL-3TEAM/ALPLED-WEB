@@ -443,6 +443,8 @@ class DocumentWorkflowViewTests(TestCase):
         references = self.client.session["docs_initial_generation"]["itf_reference_files"]
         self.assertEqual(len(references), 1)
         self.assertEqual(references[0]["name"], "screen.png")
+        self.assertTrue(references[0]["storage_key"].startswith("temp/"))
+        self.assertIn("/temp/", references[0]["path"])
         self.assertTrue((self.temp_dir / references[0]["storage_key"]).exists())
 
     def test_itf_upload_appends_references_across_multiple_requests(self):
@@ -473,6 +475,7 @@ class DocumentWorkflowViewTests(TestCase):
         references = self.client.session["docs_initial_generation"]["itf_reference_files"]
         self.assertEqual(len(references), 2)
         self.assertEqual([reference["name"] for reference in references], ["screen-1.png", "screen-2.jpg"])
+        self.assertTrue(all(reference["storage_key"].startswith("temp/") for reference in references))
 
     def test_itf_remove_deletes_temp_file_and_session_entry(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
@@ -484,18 +487,21 @@ class DocumentWorkflowViewTests(TestCase):
                 {"action": "upload_itf_reference", "docs_cd": "DOC_ITF", "itf_references": [upload]},
             )
             reference = self.client.session["docs_initial_generation"]["itf_reference_files"][0]
+            self.assertTrue((self.temp_dir / reference["storage_key"]).exists())
 
-            response = self.client.post(
-                reverse("doc_generate"),
-                {
-                    "action": "remove_itf_reference",
-                    "docs_cd": "DOC_ITF",
-                    "reference_token": reference["token"],
-                },
-            )
+            with patch("docs.services.delete_object") as delete_object_mock:
+                response = self.client.post(
+                    reverse("doc_generate"),
+                    {
+                        "action": "remove_itf_reference",
+                        "docs_cd": "DOC_ITF",
+                        "reference_token": reference["token"],
+                    },
+                )
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.client.session["docs_initial_generation"]["itf_reference_files"], [])
+        delete_object_mock.assert_called_once_with(reference["storage_key"])
         self.assertTrue(reference["storage_key"].endswith(".png"))
 
     def test_itf_generation_payload_uses_uploaded_reference_s3_paths(self):
@@ -511,9 +517,10 @@ class DocumentWorkflowViewTests(TestCase):
             payload = build_generation_request_payload(self.project, state, "DOC_ITF")
 
         reference = self.client.session["docs_initial_generation"]["itf_reference_files"][0]
-        self.assertEqual(payload["docs_cd"], "INTERFACE")
+        self.assertEqual(payload["docs_cd"], "DOC_ITF")
         self.assertEqual(payload["image_list"], [reference["path"]])
         self.assertTrue(payload["image_list"][0].startswith("s3://"))
+        self.assertIn("/temp/", payload["image_list"][0])
 
     def test_architecture_form_add_creates_project_net_with_requested_mapping(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
@@ -608,7 +615,7 @@ class DocumentWorkflowViewTests(TestCase):
         state = get_generation_state(self.client.session, self.project)
         payload = build_generation_request_payload(self.project, state, "DOC_ARCH")
 
-        self.assertEqual(payload["docs_cd"], "ARCH")
+        self.assertEqual(payload["docs_cd"], "DOC_ARCH")
         self.assertNotIn("project_nets", payload)
         self.assertEqual(payload["image_list"], [])
 
