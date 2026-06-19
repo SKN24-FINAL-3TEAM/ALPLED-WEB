@@ -1,5 +1,20 @@
-<form method="post" action="{% url 'project_list' %}" class="space-y-8" data-project-create-form>
+<form method="post" action="{% url 'project_list' %}" class="space-y-8" data-project-create-form data-project-form-root>
   {% csrf_token %}
+  <input type="hidden" name="action" value="{% if project_form_mode == 'edit' %}update_project{% else %}create_project{% endif %}">
+  <input type="hidden" name="project_sn" value="{{ project_form_project_sn }}">
+
+  {% if project_form_mode == "edit" %}
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="space-y-2">
+        <p class="text-sm font-medium text-slate-500">프로젝트 ID</p>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900">{{ project_form_project_id }}</div>
+      </div>
+      <div class="space-y-2">
+        <p class="text-sm font-medium text-slate-500">등록일자</p>
+        <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-900">{{ project_form_created_at|date:"Y-m-d H:i" }}</div>
+      </div>
+    </div>
+  {% endif %}
 
   <div class="space-y-2">
     <label for="project-name" class="block text-sm font-medium text-slate-900">프로젝트명</label>
@@ -7,7 +22,7 @@
       id="project-name"
       name="project_name"
       type="text"
-      value="{{ project_name|default:'' }}"
+      value="{{ project_form_name|default:'' }}"
       class="w-full max-w-xl rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
       placeholder="프로젝트명을 입력하세요.">
   </div>
@@ -23,11 +38,23 @@
         추가
       </button>
     </div>
-    <input type="hidden" name="manager_user_ids" value="" data-project-role-input="manager">
+    <input type="hidden" name="manager_user_ids" value="{{ project_form_manager_user_ids }}" data-project-role-input="manager">
     <div class="space-y-3" data-project-role-list="manager">
+      {% for user in project_form_manager_users %}
+      <div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm" data-project-user-item data-user-id="{{ user.user_id }}">
+        <div>
+          <p class="text-sm font-medium text-slate-900" data-project-user-name>{{ user.name }}</p>
+          <p class="mt-1 text-xs text-slate-500" data-project-user-meta>{% if user.position or user.department %}{{ user.position }}{% if user.position and user.department %} / {% endif %}{{ user.department }}{% else %}프로젝트 관리자{% endif %}</p>
+        </div>
+        <button type="button" class="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700" data-project-remove-user>
+          삭제
+        </button>
+      </div>
+      {% empty %}
       <div data-project-empty class="rounded-xl bg-slate-100 px-4 py-5 text-center text-sm text-slate-500">
         아직 추가된 관리자가 없습니다.
       </div>
+      {% endfor %}
     </div>
   </section>
 
@@ -42,17 +69,29 @@
         추가
       </button>
     </div>
-    <input type="hidden" name="member_user_ids" value="" data-project-role-input="member">
+    <input type="hidden" name="member_user_ids" value="{{ project_form_member_user_ids }}" data-project-role-input="member">
     <div class="space-y-3" data-project-role-list="member">
+      {% for user in project_form_member_users %}
+      <div class="flex items-center justify-between rounded-xl bg-white px-4 py-3 shadow-sm" data-project-user-item data-user-id="{{ user.user_id }}">
+        <div>
+          <p class="text-sm font-medium text-slate-900" data-project-user-name>{{ user.name }}</p>
+          <p class="mt-1 text-xs text-slate-500" data-project-user-meta>{% if user.position or user.department %}{{ user.position }}{% if user.position and user.department %} / {% endif %}{{ user.department }}{% else %}멤버{% endif %}</p>
+        </div>
+        <button type="button" class="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700" data-project-remove-user>
+          삭제
+        </button>
+      </div>
+      {% empty %}
       <div data-project-empty class="rounded-xl bg-slate-100 px-4 py-5 text-center text-sm text-slate-500">
         아직 추가된 담당자가 없습니다.
       </div>
+      {% endfor %}
     </div>
   </section>
 
   <div class="flex justify-end">
     <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700" data-project-create-submit>
-      프로젝트 등록
+      {{ project_form_submit_label|default:"프로젝트 등록" }}
     </button>
   </div>
 </form>

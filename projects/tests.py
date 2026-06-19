@@ -1,7 +1,8 @@
 from django.test import TestCase
 from django.urls import reverse
 
-from common.models import YesNoChoices
+from common.models import Code, YesNoChoices
+from projects.models import Project, ProjectUserRole
 from users.models import User
 
 
@@ -44,6 +45,14 @@ class ProjectListAccessTests(TestCase):
             self.member.save(
                 update_fields=["password", "sys_mngr_yn", "use_yn", "created_by", "updated_by"]
             )
+        self.role_manager, _ = Code.objects.get_or_create(
+            code="ROLE_MANAGER",
+            defaults={"name": "관리자", "created_by": self.admin, "updated_by": self.admin},
+        )
+        self.role_member, _ = Code.objects.get_or_create(
+            code="ROLE_MEMBER",
+            defaults={"name": "멤버", "created_by": self.admin, "updated_by": self.admin},
+        )
 
     def _doc_history_url(self):
         return f"{reverse('doc_history_list')}?docs_cd=DOC_SRS"
@@ -62,3 +71,77 @@ class ProjectListAccessTests(TestCase):
         response = self.client.get(reverse("project_list"))
 
         self.assertEqual(response.status_code, 200)
+
+    def test_admin_can_open_project_edit_modal_with_prefilled_data(self):
+        project = Project.objects.create(
+            sn=1,
+            name="Alpha",
+            is_deleted=YesNoChoices.NO,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        ProjectUserRole.objects.create(
+            sn=1,
+            project=project,
+            user=self.admin,
+            role=self.role_manager,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        ProjectUserRole.objects.create(
+            sn=2,
+            project=project,
+            user=self.member,
+            role=self.role_member,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.client.force_login(self.admin)
+
+        response = self.client.get(
+            reverse("project_list"),
+            {"open_project_form": "1", "project_form_mode": "edit", "project_sn": project.sn},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["open_project_form"])
+        self.assertEqual(response.context["project_form_mode"], "edit")
+        self.assertEqual(response.context["project_form_name"], "Alpha")
+        self.assertEqual(response.context["project_form_manager_users"][0]["user_id"], self.admin.user_id)
+        self.assertEqual(response.context["project_form_member_users"][0]["user_id"], self.member.user_id)
+
+    def test_admin_can_update_project_name_and_members(self):
+        project = Project.objects.create(
+            sn=1,
+            name="Alpha",
+            is_deleted=YesNoChoices.NO,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        ProjectUserRole.objects.create(
+            sn=1,
+            project=project,
+            user=self.admin,
+            role=self.role_manager,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("project_list"),
+            {
+                "action": "update_project",
+                "project_sn": project.sn,
+                "project_name": "Beta",
+                "manager_user_ids": self.admin.user_id,
+                "member_user_ids": self.member.user_id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        project.refresh_from_db()
+        self.assertEqual(project.name, "Beta")
+        self.assertTrue(
+            ProjectUserRole.objects.filter(project=project, user=self.member, role=self.role_member).exists()
+        )

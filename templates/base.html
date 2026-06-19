@@ -16,6 +16,7 @@
   {% include "components/alert.html" with register_only=True %}
   {% include "components/confirm.html" with register_only=True %}
   {% include "components/notice.html" with register_only=True %}
+  {% include "components/job_progress.html" with register_only=True %}
   {% if request.user.is_authenticated %}
     {% include "components/sidebar.html" %}
   {% endif %}

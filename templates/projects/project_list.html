@@ -5,6 +5,7 @@
 {% block content %}
 <div
   id="project-page-state"
+  data-open-project-form="{{ open_project_form|yesno:'true,false' }}"
   data-open-project-user-search="{{ open_project_user_search|yesno:'true,false' }}"
   data-open-project-user-search-role="{{ project_target_role|default:'manager' }}"
   class="hidden"></div>
@@ -14,9 +15,9 @@
     <div class="flex items-end justify-between gap-4">
       <h1 class="text-2xl font-bold text-slate-900">{{ title }}</h1>
       <div class="flex items-center gap-3">
-        <button type="button" data-modal-target="project-create-modal" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+        <a href="{% url 'project_list' %}?open_project_form=1&project_form_mode=create" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
           프로젝트 등록
-        </button>
+        </a>
       </div>
     </div>
 
@@ -57,7 +58,7 @@
         </thead>
         <tbody class="divide-y divide-slate-200 text-slate-700">
           {% for project in projects %}
-            <tr class="bg-white transition hover:bg-slate-50">
+            <tr class="cursor-pointer bg-white transition hover:bg-slate-50" data-project-open-url="{{ project.edit_url }}" tabindex="0">
               <td class="px-6 py-4 text-center font-medium text-slate-900">{{ project.project_id }}</td>
               <td class="px-6 py-4 text-center">{{ project.name }}</td>
               <td class="px-6 py-4 text-center">{{ project.manager_name }}</td>
@@ -78,6 +79,6 @@
   </div>
 </div>
 
-{% include "components/modal.html" with modal_id="project-create-modal" title="프로젝트 등록" subtitle="프로젝트와 담당 인원을 함께 등록합니다." body_template="projects/partials/project_create_body.html" width_class="max-w-5xl" %}
+{% include "components/modal.html" with modal_id="project-form-modal" title=project_form_title subtitle=project_form_subtitle body_template="projects/partials/project_create_body.html" width_class="max-w-5xl" %}
 {% include "components/modal.html" with modal_id="project-user-search-modal" title="사용자 검색" subtitle="프로젝트에 추가할 사용자를 검색합니다." body_template="projects/partials/project_user_search_body.html" width_class="max-w-5xl" %}
 {% endblock %}

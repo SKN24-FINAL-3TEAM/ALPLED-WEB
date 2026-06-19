@@ -13,7 +13,13 @@ from projects.models import Project, ProjectNet, ProjectUserRole
 from users.models import User
 
 from .models import Document, DocumentApproval, DocumentDetail
-from .services import extract_text_from_docx, get_document_detail_bytes
+from .services import (
+    build_generation_request_payload,
+    extract_text_from_docx,
+    get_document_detail_bytes,
+    get_generation_state,
+    start_initial_generation_job,
+)
 
 
 class DocumentWorkflowViewTests(TestCase):
@@ -33,6 +39,27 @@ class DocumentWorkflowViewTests(TestCase):
             self.user.use_yn = YesNoChoices.YES
             self.user.save(update_fields=["password", "use_yn"])
         self.client.force_login(self.user)
+        self.other_user = User.objects.filter(user_id="doc-member").first()
+        if self.other_user is None:
+            self.other_user = User.objects.create_user(
+                sn=99,
+                user_id="doc-member",
+                password="abc1234",
+                name="Doc Member",
+                sys_mngr_yn=YesNoChoices.NO,
+                use_yn=YesNoChoices.YES,
+                created_by=self.user,
+                updated_by=self.user,
+            )
+        else:
+            self.other_user.set_password("abc1234")
+            self.other_user.sys_mngr_yn = YesNoChoices.NO
+            self.other_user.use_yn = YesNoChoices.YES
+            self.other_user.created_by = self.user
+            self.other_user.updated_by = self.user
+            self.other_user.save(
+                update_fields=["password", "sys_mngr_yn", "use_yn", "created_by", "updated_by"]
+            )
         self.temp_dir = Path.cwd() / ".tmp-test-itf" / self._testMethodName
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.storage_override = self.settings(ALPLED_LOCAL_STORAGE_ROOT=self.temp_dir)
@@ -118,6 +145,14 @@ class DocumentWorkflowViewTests(TestCase):
             project=self.project,
             user=self.user,
             role=self.role_manager,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        ProjectUserRole.objects.create(
+            sn=2,
+            project=self.project,
+            user=self.other_user,
+            role=self.role_member,
             created_by=self.user,
             updated_by=self.user,
         )
@@ -227,6 +262,21 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.context["selected_document_code"], "DOC_ITF")
         self.assertTrue(response.context["can_generate"])
 
+    def test_history_list_keeps_generation_button_until_all_document_types_exist(self):
+        for index, code in enumerate([self.srs_code, self.itf_code, self.arch_code, self.erd_code, self.db_code], start=1):
+            self._create_document(sn=index, version="1.0", document_type=code)
+
+        partial_response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_TS"})
+
+        self.assertEqual(partial_response.status_code, 200)
+        self.assertTrue(partial_response.context["can_generate"])
+
+        self._create_document(sn=6, version="1.0", document_type=self.ts_code)
+        completed_response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_TS"})
+
+        self.assertEqual(completed_response.status_code, 200)
+        self.assertFalse(completed_response.context["can_generate"])
+
     def test_history_list_excludes_version_zero_and_keeps_latest_duplicate_version(self):
         self._create_document(sn=1, version="1.0", document_type=self.srs_code)
         newer = self._create_document(sn=2, version="1.0", document_type=self.srs_code)
@@ -246,6 +296,17 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertFalse(response.context["selected_files"])
         self.assertIsNone(response.context["current_draft"])
         self.assertTrue(response.context["show_file_selector"])
+        self.assertContains(response, "생성 진행 현황")
+
+    def test_generate_view_job_form_has_explicit_submit_url(self):
+        project_file = self._create_project_file()
+        self._set_generation_state(selected_file_ids=[project_file.sn])
+
+        response = self.client.get(reverse("doc_generate"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'action="{reverse("doc_generate")}"', html=False)
+        self.assertContains(response, f'data-submit-url="{reverse("doc_generate")}"', html=False)
 
     def test_selecting_files_updates_generation_session_and_redirects_to_clean_url(self):
         project_file = self._create_project_file()
@@ -301,20 +362,28 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertNotIn("docs_initial_generation", self.client.session)
         self.assertTrue(reference_key.endswith(".png"))
 
-    def test_start_current_generation_creates_first_draft_document(self):
+    def test_start_current_generation_ajax_returns_job_payload(self):
         project_file = self._create_project_file()
         self._set_generation_state(selected_file_ids=[project_file.sn])
+        draft = self._create_document(sn=11, version="0", document_type=self.srs_code)
 
-        response = self.client.post(
-            reverse("doc_generate"),
-            {"action": "start_current", "selected_files": [project_file.sn]},
-        )
+        with patch(
+            "docs.views.start_initial_generation_job",
+            return_value={"status": "started", "document": draft, "message": "문서 생성을 요청했습니다."},
+        ) as start_job_mock:
+            response = self.client.post(
+                reverse("doc_generate"),
+                {"action": "start_current", "selected_files": [project_file.sn]},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
 
-        self.assertEqual(response.status_code, 302)
-        draft = Document.objects.get(version="0")
-        self.assertEqual(draft.document_type_id, "DOC_SRS")
-        self.assertEqual(draft.progress_status_id, "PRGRS_PROCESSING")
-        self.assertEqual(DocumentDetail.objects.filter(document=draft).count(), 1)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "started")
+        self.assertEqual(payload["docs_cd"], "DOC_SRS")
+        self.assertEqual(payload["tracking_document_sn"], draft.sn)
+        self.assertIn(reverse("doc_job_status"), payload["poll_url"])
+        start_job_mock.assert_called_once()
 
     def test_confirming_initial_draft_advances_to_next_document_step(self):
         project_file = self._create_project_file()
@@ -429,7 +498,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(self.client.session["docs_initial_generation"]["itf_reference_files"], [])
         self.assertTrue(reference["storage_key"].endswith(".png"))
 
-    def test_itf_draft_generation_uses_uploaded_reference_names(self):
+    def test_itf_generation_payload_uses_uploaded_reference_s3_paths(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
         upload = SimpleUploadedFile("screen.png", b"png-bytes", content_type="image/png")
 
@@ -438,15 +507,13 @@ class DocumentWorkflowViewTests(TestCase):
                 reverse("doc_generate"),
                 {"action": "upload_itf_reference", "docs_cd": "DOC_ITF", "itf_references": [upload]},
             )
-            response = self.client.post(
-                reverse("doc_generate"),
-                {"action": "start_current", "docs_cd": "DOC_ITF"},
-            )
+            state = get_generation_state(self.client.session, self.project)
+            payload = build_generation_request_payload(self.project, state, "DOC_ITF")
 
-        self.assertEqual(response.status_code, 302)
-        draft = Document.objects.get(document_type=self.itf_code, version="0")
-        content_text = extract_text_from_docx(get_document_detail_bytes(DocumentDetail.objects.get(document=draft)))
-        self.assertIn("screen.png", content_text)
+        reference = self.client.session["docs_initial_generation"]["itf_reference_files"][0]
+        self.assertEqual(payload["docs_cd"], "INTERFACE")
+        self.assertEqual(payload["image_list"], [reference["path"]])
+        self.assertTrue(payload["image_list"][0].startswith("s3://"))
 
     def test_architecture_form_add_creates_project_net_with_requested_mapping(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
@@ -505,7 +572,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertFalse(ProjectNet.objects.filter(sn=target.sn, project=self.project).exists())
         self.assertTrue(ProjectNet.objects.filter(sn=survivor.sn, project=other_project).exists())
 
-    def test_architecture_start_requires_project_net_then_creates_draft(self):
+    def test_architecture_start_requires_project_net_then_returns_job_payload(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
 
         missing_response = self.client.post(
@@ -517,30 +584,170 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(Document.objects.filter(document_type=self.arch_code, version="0").count(), 0)
 
         self._create_project_net()
-        success_response = self.client.post(
-            reverse("doc_generate"),
-            {"action": "start_current", "docs_cd": "DOC_ARCH"},
-        )
+        draft = self._create_document(sn=21, version="0", document_type=self.arch_code)
+        with patch(
+            "docs.views.start_initial_generation_job",
+            return_value={"status": "started", "document": draft, "message": "문서 생성을 요청했습니다."},
+        ) as start_job_mock:
+            success_response = self.client.post(
+                reverse("doc_generate"),
+                {"action": "start_current", "docs_cd": "DOC_ARCH"},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
 
-        self.assertEqual(success_response.status_code, 302)
-        draft = Document.objects.get(document_type=self.arch_code, version="0")
-        self.assertEqual(draft.document_type_id, "DOC_ARCH")
-        self.assertEqual(DocumentDetail.objects.filter(document=draft).count(), 1)
+        self.assertEqual(success_response.status_code, 200)
+        payload = success_response.json()
+        self.assertEqual(payload["status"], "started")
+        self.assertEqual(payload["docs_cd"], "DOC_ARCH")
+        self.assertEqual(payload["tracking_document_sn"], draft.sn)
+        start_job_mock.assert_called_once()
 
-    def test_architecture_draft_generation_uses_project_net_names(self):
+    def test_architecture_generation_payload_does_not_include_project_net_json(self):
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
         self._create_project_net(name="업무망", purpose="내부 시스템")
+        state = get_generation_state(self.client.session, self.project)
+        payload = build_generation_request_payload(self.project, state, "DOC_ARCH")
 
-        response = self.client.post(
-            reverse("doc_generate"),
-            {"action": "start_current", "docs_cd": "DOC_ARCH"},
+        self.assertEqual(payload["docs_cd"], "ARCH")
+        self.assertNotIn("project_nets", payload)
+        self.assertEqual(payload["image_list"], [])
+
+    def test_start_initial_generation_job_returns_error_when_fastapi_call_fails(self):
+        project_file = self._create_project_file()
+        state = {
+            "project_sn": self.project.sn,
+            "selected_file_ids": [str(project_file.sn)],
+            "draft_documents": {},
+            "confirmed_documents": {},
+            "itf_reference_files": [],
+        }
+
+        with patch("docs.services.request_fastapi_generate", side_effect=ValueError("FastAPI base URL is not configured.")):
+            result = start_initial_generation_job(self.project, self.user, state)
+
+        self.assertEqual(result["status"], "error")
+        self.assertIsNone(result["document"])
+        self.assertEqual(result["message"], "FastAPI base URL is not configured.")
+
+    def test_document_auto_apply_ajax_returns_job_payload(self):
+        meeting_file = self._create_project_file(sn=30, code=self.file_meeting_code, name="meeting.docx")
+        document = self._create_document(sn=31, version="1.0", user=self.user)
+        self._create_detail(sn=31, document=document)
+
+        with patch(
+            "docs.views.start_auto_apply_job",
+            return_value={"status": "started", "document": document, "message": "회의 내용 자동 적용을 요청했습니다."},
+        ) as start_job_mock:
+            response = self.client.post(
+                reverse("doc_auto_apply", args=[document.sn]),
+                {"selected_files": [meeting_file.sn]},
+                HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "started")
+        self.assertEqual(payload["job_kind"], "auto_apply")
+        self.assertEqual(payload["tracking_document_sn"], document.sn)
+        self.assertIn(reverse("doc_job_status"), payload["poll_url"])
+        start_job_mock.assert_called_once()
+
+    def test_document_detail_shows_auto_apply_button_only_for_latest_document(self):
+        older_document = self._create_document(sn=50, version="1.0", user=self.user)
+        self._create_detail(sn=50, document=older_document)
+        latest_document = self._create_document(sn=51, version="1.1", user=self.user)
+        self._create_detail(sn=51, document=latest_document)
+
+        older_response = self.client.get(reverse("doc_detail", args=[older_document.sn]), {"mode": "edit"})
+        latest_response = self.client.get(reverse("doc_detail", args=[latest_document.sn]), {"mode": "edit"})
+
+        self.assertEqual(older_response.status_code, 200)
+        self.assertNotContains(older_response, 'data-modal-target="meeting-files-modal"', html=False)
+        self.assertEqual(latest_response.status_code, 200)
+        self.assertContains(latest_response, 'data-modal-target="meeting-files-modal"', html=False)
+
+    def test_document_detail_only_requester_sees_cancel_approval_button(self):
+        document = self._create_document(sn=60, version="1.0", user=None)
+        detail = self._create_detail(sn=60, document=document)
+        approval = DocumentApproval.objects.create(
+            approval_sn=60,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="승인 요청입니다.",
+            rejection_reason=None,
+            created_by=self.user,
+            updated_by=self.user,
         )
 
-        self.assertEqual(response.status_code, 302)
-        draft = Document.objects.get(document_type=self.arch_code, version="0")
-        content_text = extract_text_from_docx(get_document_detail_bytes(DocumentDetail.objects.get(document=draft)))
-        self.assertIn("업무망", content_text)
-        self.assertIn("내부 시스템", content_text)
+        requester_response = self.client.get(reverse("doc_detail", args=[document.sn]))
+        self.assertEqual(requester_response.status_code, 200)
+        self.assertContains(requester_response, reverse("doc_cancel_approval", args=[approval.approval_sn]), html=False)
+
+        self.client.force_login(self.other_user)
+        session = self.client.session
+        session["current_project_sn"] = self.project.sn
+        session.save()
+        other_response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(other_response.status_code, 200)
+        self.assertNotContains(other_response, reverse("doc_cancel_approval", args=[approval.approval_sn]), html=False)
+        self.assertContains(other_response, "승인 요청 상태 : 승인 대기")
+
+    def test_approval_list_hides_requester_input_for_member(self):
+        document = self._create_document(sn=70, version="1.0", user=None)
+        detail = self._create_detail(sn=70, document=document)
+        DocumentApproval.objects.create(
+            approval_sn=70,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="멤버 요청입니다.",
+            rejection_reason=None,
+            created_by=self.other_user,
+            updated_by=self.other_user,
+        )
+
+        self.client.force_login(self.other_user)
+        session = self.client.session
+        session["current_project_sn"] = self.project.sn
+        session.save()
+        response = self.client.get(reverse("doc_approval_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["include_requester_search"])
+        self.assertContains(response, 'style="display:none;"', html=False)
+
+    def test_document_job_status_returns_completed_redirect_url(self):
+        draft = self._create_document(sn=40, version="0", document_type=self.srs_code)
+        draft.progress_status = self.progress_completed
+        draft.save(update_fields=["progress_status"])
+        self._set_generation_state(draft_documents={"DOC_SRS": draft.sn})
+
+        response = self.client.get(
+            reverse("doc_job_status"),
+            {
+                "job_kind": "initial",
+                "docs_cd": "DOC_SRS",
+                "tracking_document_sn": draft.sn,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "completed")
+        self.assertEqual(payload["redirect_url"], reverse("doc_detail", args=[draft.sn]))
+
+    def test_history_list_exposes_active_job_context_for_running_generation(self):
+        draft = self._create_document(sn=41, version="0", document_type=self.srs_code)
+        draft.progress_status = self.progress_processing
+        draft.save(update_fields=["progress_status"])
+        self._set_generation_state(draft_documents={"DOC_SRS": draft.sn})
+
+        response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_SRS"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.context["active_job"])
+        self.assertEqual(response.context["active_job"]["tracking_document_sn"], draft.sn)
 
     def test_document_save_releases_lock_and_adds_revision(self):
         document = self._create_document(sn=1, version="0", user=self.user)

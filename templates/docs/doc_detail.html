@@ -4,6 +4,20 @@
 
 {% block content %}
 <div class="space-y-6">
+  {% if active_job %}
+    <div
+      id="doc-job-page-state"
+      data-doc-job-page-state
+      data-job-title="{{ active_job.title }}"
+      data-job-message="{{ active_job.message }}"
+      data-poll-url="{{ active_job.poll_url }}"
+      data-poll-interval-ms="{{ active_job.poll_interval_ms }}"
+      data-job-started-at="{{ active_job.started_at }}"
+      data-job-elapsed-seconds="{{ active_job.elapsed_seconds }}"
+      class="hidden"
+    ></div>
+  {% endif %}
+
   <section class="space-y-4">
     <div class="flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -18,9 +32,11 @@
         {% endif %}
 
         {% if document_state == "edit" %}
+          {% if can_auto_apply %}
           <button type="button" data-modal-target="meeting-files-modal" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
             회의 내용 자동 적용
           </button>
+          {% endif %}
           <button type="button" data-modal-target="history-modal" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
             수정이력 보기
           </button>
@@ -31,7 +47,7 @@
               수정하기
             </button>
           </form>
-        {% elif document_state == "waiting" and pending_approval %}
+        {% elif document_state == "waiting" and can_cancel_approval %}
           <form method="post" action="{% url 'doc_cancel_approval' pending_approval.sn %}">
             {% csrf_token %}
             <button type="submit" class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100">
@@ -75,6 +91,11 @@
   </section>
 
   <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+    {% if active_job %}
+      <div class="mb-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+        {{ active_job.title }} 작업이 진행 중입니다. 완료되면 화면이 자동으로 새로 고쳐집니다.
+      </div>
+    {% endif %}
     {% if onlyoffice_enabled %}
       <div class="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
         OnlyOffice Document Server가 연결되어 있으면 아래 영역에서 문서를 조회하거나 수정할 수 있습니다.
@@ -192,7 +213,7 @@
           </div>
         </form>
 
-        <form method="post" action="{% url 'doc_auto_apply' document.sn %}" class="mt-4 space-y-4">
+        <form method="post" action="{% url 'doc_auto_apply' document.sn %}" class="mt-4 space-y-4" data-doc-job-form data-job-kind="auto_apply">
           {% csrf_token %}
           {% include "files/partials/file_selector_table.html" with documents=meeting_documents current_project=current_project empty_message="등록된 회의록 문서가 없습니다." %}
           <div class="flex justify-end">

@@ -41,7 +41,7 @@ load_dotenv(BASE_DIR / ".env")
 SECRET_KEY = 'django-insecure-#%inopjx=kh@cxo0^2vyvx3ry(mve=e+803(@jkj@uut--=bdo'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -51,6 +51,8 @@ ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
+LOCAL_DEV_HOSTS = {"127.0.0.1", "localhost", "host.docker.internal"}
+SERVE_STATIC_LOCALLY = bool(ALLOWED_HOSTS) and set(ALLOWED_HOSTS).issubset(LOCAL_DEV_HOSTS)
 
 
 # Application definition
@@ -183,6 +185,8 @@ AUTH_USER_MODEL = 'users.User'
 ONLYOFFICE_DOCUMENT_SERVER_URL = os.getenv("ONLYOFFICE_DOCUMENT_SERVER_URL", "")
 ONLYOFFICE_JWT_SECRET = os.getenv("ONLYOFFICE_JWT_SECRET", "")
 DJANGO_PUBLIC_BASE_URL = os.getenv("DJANGO_PUBLIC_BASE_URL", "")
+FASTAPI_BASE_URL = os.getenv("FASTAPI_BASE_URL", "http://127.0.0.1:8080").rstrip("/")
+DOC_JOB_POLL_INTERVAL_SECONDS = int(os.getenv("DOC_JOB_POLL_INTERVAL_SECONDS", "10"))
 
 AWS_ACCESS_KEY_ID = os.getenv("S3_ACCESS_KEY", "")
 AWS_SECRET_ACCESS_KEY = os.getenv("S3_SECRET_KEY", "")
@@ -198,4 +202,3 @@ ALPLED_LOCAL_STORAGE_ROOT = Path(
     os.getenv("ALPLED_LOCAL_STORAGE_ROOT", "")
     or (Path(tempfile.gettempdir()) / "alpled_web" / "storage")
 )
-

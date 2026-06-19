@@ -115,6 +115,9 @@
 
   let confirmResolver = null;
   let noticeResolver = null;
+  let docJobPollTimer = null;
+  let docJobElapsedTimer = null;
+  let docJobElapsedSeconds = 0;
 
   function setConfirmTone(button, tone) {
     if (!button) return;
@@ -196,6 +199,241 @@
     });
   }
 
+  function getJobProgressRoot() {
+    return document.getElementById("doc-job-progress-root");
+  }
+
+  function getJobProgressTitle() {
+    return document.querySelector("[data-job-progress-title]");
+  }
+
+  function getJobProgressMessage() {
+    return document.querySelector("[data-job-progress-message]");
+  }
+
+  function getJobProgressElapsed() {
+    return document.querySelector("[data-job-progress-elapsed]");
+  }
+
+  function clearDocJobPollTimer() {
+    if (!docJobPollTimer) return;
+    window.clearTimeout(docJobPollTimer);
+    docJobPollTimer = null;
+  }
+
+  function clearDocJobElapsedTimer() {
+    if (!docJobElapsedTimer) return;
+    window.clearInterval(docJobElapsedTimer);
+    docJobElapsedTimer = null;
+  }
+
+  function formatElapsedTime(totalSeconds) {
+    const normalized = Math.max(Number.parseInt(totalSeconds || 0, 10) || 0, 0);
+    const hours = Math.floor(normalized / 3600);
+    const minutes = Math.floor((normalized % 3600) / 60);
+    const seconds = normalized % 60;
+    if (hours > 0) {
+      return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+    }
+    return [minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+  }
+
+  function renderElapsedTime(totalSeconds) {
+    const elapsedNode = getJobProgressElapsed();
+    if (!elapsedNode) return;
+    elapsedNode.textContent = formatElapsedTime(totalSeconds);
+  }
+
+  function startElapsedTimer(initialSeconds = 0) {
+    clearDocJobElapsedTimer();
+    docJobElapsedSeconds = Math.max(Number.parseInt(initialSeconds || 0, 10) || 0, 0);
+    renderElapsedTime(docJobElapsedSeconds);
+    docJobElapsedTimer = window.setInterval(() => {
+      docJobElapsedSeconds += 1;
+      renderElapsedTime(docJobElapsedSeconds);
+    }, 1000);
+  }
+
+  function updateJobProgress({ title, message }) {
+    const titleNode = getJobProgressTitle();
+    const messageNode = getJobProgressMessage();
+    if (titleNode && title) {
+      titleNode.textContent = title;
+    }
+    if (messageNode && message) {
+      messageNode.textContent = message;
+    }
+  }
+
+  function showJobProgress({ title, message }) {
+    const root = getJobProgressRoot();
+    if (!root) return;
+    updateJobProgress({ title, message });
+    showModal(root);
+  }
+
+  function hideJobProgress() {
+    clearDocJobPollTimer();
+    clearDocJobElapsedTimer();
+    hideModal(getJobProgressRoot());
+  }
+
+  function hideOpenModalsExceptJobProgress() {
+    const jobProgressRoot = getJobProgressRoot();
+    document.querySelectorAll("[data-modal-root].flex").forEach((modal) => {
+      if (modal === jobProgressRoot) return;
+      hideModal(modal);
+    });
+  }
+
+  function resolveFormSubmitUrl(form, fallbackUrl = window.location.href) {
+    if (!form) return fallbackUrl;
+
+    const dataUrl = form.dataset.submitUrl?.trim();
+    if (dataUrl) {
+      return dataUrl;
+    }
+
+    // Avoid named form controls like <input name="action"> shadowing DOM properties.
+    const attributeUrl = form.getAttribute("action");
+    if (typeof attributeUrl === "string" && attributeUrl.trim()) {
+      return attributeUrl.trim();
+    }
+
+    return fallbackUrl;
+  }
+
+  async function pollDocJob(pollUrl, options = {}) {
+    const {
+      title = "문서 작업 진행 중",
+      pollIntervalMs = 10000,
+      fallbackRedirectUrl = "",
+      fallbackElapsedSeconds = 0,
+    } = options;
+
+    if (!pollUrl) {
+      hideJobProgress();
+      showAppAlert("작업 상태 조회 경로를 확인할 수 없습니다.", "error");
+      return;
+    }
+
+    try {
+      const response = await window.fetch(pollUrl, {
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || "작업 상태를 확인하지 못했습니다.");
+      }
+
+      updateJobProgress({
+        title: payload.title || title,
+        message: payload.message || "작업을 처리하고 있습니다.",
+      });
+      startElapsedTimer(payload.elapsed_seconds ?? fallbackElapsedSeconds);
+
+      if (payload.status === "running") {
+        clearDocJobPollTimer();
+        docJobPollTimer = window.setTimeout(() => {
+          pollDocJob(pollUrl, {
+            title: payload.title || title,
+            pollIntervalMs: payload.poll_interval_ms || pollIntervalMs,
+            fallbackRedirectUrl,
+            fallbackElapsedSeconds: payload.elapsed_seconds ?? fallbackElapsedSeconds,
+          });
+        }, payload.poll_interval_ms || pollIntervalMs);
+        return;
+      }
+
+      if (payload.status === "completed") {
+        const redirectUrl = payload.redirect_url || fallbackRedirectUrl || window.location.href;
+        window.location.assign(redirectUrl);
+        return;
+      }
+
+      hideJobProgress();
+      showAppAlert(payload.message || "문서 작업을 완료하지 못했습니다.", payload.status === "failed" ? "error" : "warning");
+    } catch (error) {
+      hideJobProgress();
+      showAppAlert(error.message || "작업 상태를 확인하지 못했습니다.", "error");
+    }
+  }
+
+  async function startDocJob(form) {
+    if (!form || form.dataset.submitting === "true") return;
+
+    const csrfToken = form.querySelector('input[name="csrfmiddlewaretoken"]')?.value || "";
+    const formData = new FormData(form);
+    const fallbackTitle = form.dataset.jobTitle || "문서 작업 진행 중";
+    const requestUrl = resolveFormSubmitUrl(form);
+    startElapsedTimer(0);
+
+    form.dataset.submitting = "true";
+    hideOpenModalsExceptJobProgress();
+    showJobProgress({
+      title: fallbackTitle,
+      message: "요청을 전송하고 있습니다.",
+    });
+
+    try {
+      const response = await window.fetch(requestUrl, {
+        method: (form.method || "POST").toUpperCase(),
+        body: formData,
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+          "X-CSRFToken": csrfToken,
+        },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || "문서 작업 요청을 처리하지 못했습니다.");
+      }
+
+      showJobProgress({
+        title: payload.title || fallbackTitle,
+        message: payload.message || "요청을 처리하고 있습니다.",
+      });
+
+      if (payload.status === "completed" && payload.redirect_url) {
+        window.location.assign(payload.redirect_url);
+        return;
+      }
+
+      await pollDocJob(payload.poll_url, {
+        title: payload.title || fallbackTitle,
+        pollIntervalMs: payload.poll_interval_ms || 10000,
+        fallbackRedirectUrl: payload.redirect_url || "",
+        fallbackElapsedSeconds: payload.elapsed_seconds || 0,
+      });
+    } catch (error) {
+      hideJobProgress();
+      showAppAlert(error.message || "문서 작업 요청 중 오류가 발생했습니다.", "error");
+    } finally {
+      delete form.dataset.submitting;
+    }
+  }
+
+  function initDocJobPageStates() {
+    const pageState = document.querySelector("[data-doc-job-page-state]");
+    if (!pageState || pageState.dataset.initialized === "true") return;
+
+    pageState.dataset.initialized = "true";
+    showJobProgress({
+      title: pageState.dataset.jobTitle || "문서 작업 진행 중",
+      message: pageState.dataset.jobMessage || "작업을 처리하고 있습니다.",
+    });
+    startElapsedTimer(Number.parseInt(pageState.dataset.jobElapsedSeconds || "0", 10) || 0);
+    pollDocJob(pageState.dataset.pollUrl, {
+      title: pageState.dataset.jobTitle || "문서 작업 진행 중",
+      pollIntervalMs: Number.parseInt(pageState.dataset.pollIntervalMs || "10000", 10) || 10000,
+      fallbackElapsedSeconds: Number.parseInt(pageState.dataset.jobElapsedSeconds || "0", 10) || 0,
+    });
+  }
+
   function resubmitForm(form, submitter) {
     if (!form) return;
     form.dataset.skipConfirm = "true";
@@ -260,6 +498,10 @@
 
   function getProjectSearchModal() {
     return document.getElementById("project-user-search-modal");
+  }
+
+  function getProjectFormModal() {
+    return document.getElementById("project-form-modal");
   }
 
   function getProjectRoleList(role) {
@@ -391,6 +633,12 @@
     }
 
     showModal(modal);
+  }
+
+  function openProjectFormFromRow(row) {
+    const openUrl = row?.dataset?.projectOpenUrl;
+    if (!openUrl) return;
+    window.location.assign(openUrl);
   }
 
   function addSelectedUsersFromSearch() {
@@ -631,39 +879,6 @@
     return onlyOfficeScriptPromise;
   }
 
-  function appendGenerationMessage(messagesNode, text) {
-    const message = document.createElement("div");
-    message.className = "max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm";
-    message.textContent = text;
-    messagesNode.appendChild(message);
-  }
-
-  function startGenerationSequence() {
-    const root = document.querySelector("[data-doc-generation-root]");
-    if (!root || root.dataset.initialized === "true") return;
-
-    const rawSteps = root.dataset.docGenerationSteps || "";
-    const steps = rawSteps.split("||").map((value) => value.trim()).filter(Boolean);
-    const messagesNode = root.querySelector("[data-doc-generation-messages]");
-    const completeNode = root.querySelector("[data-doc-generation-complete]");
-    if (!messagesNode || steps.length === 0) return;
-
-    root.dataset.initialized = "true";
-    let index = 0;
-
-    const runStep = function () {
-      appendGenerationMessage(messagesNode, steps[index]);
-      index += 1;
-      if (index < steps.length) {
-        window.setTimeout(runStep, 1000);
-      } else if (completeNode) {
-        completeNode.classList.remove("hidden");
-      }
-    };
-
-    runStep();
-  }
-
   async function initOnlyOfficeEditor(root) {
     const configUrl = root.dataset.configUrl;
     const documentServerUrl = root.dataset.documentServerUrl;
@@ -735,6 +950,7 @@
     const saveButton = submitter || form.querySelector("[data-doc-save-submit]");
     const csrfToken = form.querySelector('input[name="csrfmiddlewaretoken"]')?.value || "";
     const formData = new FormData(form);
+    const requestUrl = resolveFormSubmitUrl(form);
 
     form.dataset.submitting = "true";
     if (saveButton) {
@@ -743,7 +959,7 @@
     setInlineStatus(statusNode, "OnlyOffice 저장 완료를 확인하는 중입니다.", "info");
 
     try {
-      const response = await window.fetch(form.action, {
+      const response = await window.fetch(requestUrl, {
         method: "POST",
         body: formData,
         credentials: "same-origin",
@@ -832,6 +1048,12 @@
       return;
     }
 
+    const projectOpenRow = event.target.closest("[data-project-open-url]");
+    if (projectOpenRow && !event.target.closest("a, button, input, select, textarea, form, label")) {
+      openProjectFormFromRow(projectOpenRow);
+      return;
+    }
+
     const docSelectTrigger = event.target.closest("[data-doc-upload-select]");
     if (docSelectTrigger) {
       openDocFileDialog(docSelectTrigger.dataset.docUploadSelect);
@@ -905,6 +1127,9 @@
         resolveNotice();
         return;
       }
+      if (modal?.dataset.jobProgressRoot !== undefined) {
+        return;
+      }
       hideModal(modal);
       return;
     }
@@ -922,6 +1147,9 @@
     }
 
     if (event.target.matches("[data-modal-root]")) {
+      if (event.target.dataset.jobProgressRoot !== undefined) {
+        return;
+      }
       if (event.target.dataset.confirmRoot !== undefined) {
         resolveConfirm(false);
         return;
@@ -1064,6 +1292,13 @@
       return;
     }
 
+    const docJobForm = event.target.closest("[data-doc-job-form]");
+    if (docJobForm) {
+      event.preventDefault();
+      await startDocJob(docJobForm);
+      return;
+    }
+
     const confirmForm = event.target.closest("[data-confirm-form]");
     if (confirmForm) {
       event.preventDefault();
@@ -1114,6 +1349,13 @@
   });
 
   document.addEventListener("keydown", function (event) {
+    const projectOpenRow = event.target.closest("[data-project-open-url]");
+    if (projectOpenRow && (event.key === "Enter" || event.key === " ")) {
+      event.preventDefault();
+      openProjectFormFromRow(projectOpenRow);
+      return;
+    }
+
     const profileTrigger = event.target.closest("[data-profile-url]");
     if (profileTrigger && (event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
@@ -1122,6 +1364,10 @@
     }
 
     if (event.key !== "Escape") return;
+    const jobProgressRoot = getJobProgressRoot();
+    if (jobProgressRoot?.classList.contains("flex")) {
+      return;
+    }
     const confirmRoot = getConfirmRoot();
     if (confirmRoot?.classList.contains("flex")) {
       resolveConfirm(false);
@@ -1136,6 +1382,9 @@
   });
 
   const projectPageState = document.getElementById("project-page-state");
+  if (projectPageState?.dataset.openProjectForm === "true") {
+    showModal(getProjectFormModal());
+  }
   if (projectPageState?.dataset.openProjectUserSearch === "true") {
     openProjectUserSearch(projectPageState.dataset.openProjectUserSearchRole || "manager");
   }
@@ -1165,6 +1414,6 @@
 
   syncAllProjectRoles();
   prepareDocUploadUI();
-  startGenerationSequence();
+  initDocJobPageStates();
   initOnlyOfficeEditors();
 })();

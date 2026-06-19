@@ -4,6 +4,20 @@
 
 {% block content %}
 <div class="space-y-6">
+  {% if active_job %}
+    <div
+      id="doc-job-page-state"
+      data-doc-job-page-state
+      data-job-title="{{ active_job.title }}"
+      data-job-message="{{ active_job.message }}"
+      data-poll-url="{{ active_job.poll_url }}"
+      data-poll-interval-ms="{{ active_job.poll_interval_ms }}"
+      data-job-started-at="{{ active_job.started_at }}"
+      data-job-elapsed-seconds="{{ active_job.elapsed_seconds }}"
+      class="hidden"
+    ></div>
+  {% endif %}
+
   <section class="space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
@@ -22,6 +36,11 @@
 
   <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
     <div class="border-t-2 border-slate-900">
+      {% if active_job %}
+        <div class="border-b border-blue-200 bg-blue-50 px-8 py-4 text-sm text-blue-900">
+          {{ active_job.title }} 작업이 진행 중입니다. 완료되면 자동으로 문서 상세 화면으로 이동합니다.
+        </div>
+      {% endif %}
       {% if current_project and has_documents %}
         <div class="overflow-x-auto">
           <table class="min-w-full table-fixed text-left text-sm">
@@ -66,11 +85,11 @@
       {% else %}
         <div class="px-8 py-10 text-sm text-slate-700">
           {% if current_project %}
-            <p class="font-semibold">등록된 산출물이 없습니다.</p>
-            <p class="mt-1">{{ generation_help_text }}</p>
+          <p class="font-semibold">등록된 산출물이 없습니다.</p>
+          <p class="mt-1">{{ generation_help_text }}</p>
           {% else %}
-            <p class="font-semibold">선택 가능한 프로젝트가 없습니다.</p>
-            <p class="mt-1">프로젝트를 먼저 생성하거나 현재 프로젝트를 선택해 주세요.</p>
+          <p class="font-semibold">선택 가능한 프로젝트가 없습니다.</p>
+          <p class="mt-1">프로젝트를 먼저 생성하거나 현재 프로젝트를 선택해 주세요.</p>
           {% endif %}
         </div>
       {% endif %}

@@ -3,6 +3,7 @@ import json
 import os
 import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
@@ -25,6 +26,7 @@ from .models import Document, DocumentApproval, DocumentDetail
 
 
 DOCUMENT_CODE_SEQUENCE = ("DOC_SRS", "DOC_ITF", "DOC_ARCH", "DOC_ERD", "DOC_DB", "DOC_TS")
+
 APPROVAL_STATUS_SEQUENCE = ("APRV_REQ", "APRV_COM", "APRV_RJT")
 PROJECT_ROLE_CODES = ("ROLE_MANAGER", "ROLE_MEMBER")
 GENERATION_SESSION_KEY = "docs_initial_generation"
@@ -37,6 +39,11 @@ PROGRESS_PENDING = "PRGRS_PENDING"
 PROGRESS_PROCESSING = "PRGRS_PROCESSING"
 PROGRESS_COMPLETED = "PRGRS_COMPLETED"
 PROGRESS_FAILED = "PRGRS_FAILED"
+RUNNING_PROGRESS_CODES = (PROGRESS_PENDING, PROGRESS_PROCESSING)
+TERMINAL_PROGRESS_CODES = (PROGRESS_COMPLETED, PROGRESS_FAILED)
+FASTAPI_GENERATE_TIMEOUT_SECONDS = 10
+
+
 def _build_empty_generation_state(project):
     return {
         "project_sn": project.sn if project else None,
@@ -95,6 +102,33 @@ def get_generation_itf_references(state):
     return list(state.get("itf_reference_files", []))
 
 
+def get_fastapi_base_url():
+    return str(getattr(settings, "FASTAPI_BASE_URL", "") or "").rstrip("/")
+
+def get_doc_job_poll_interval_seconds():
+    raw_value = getattr(settings, "DOC_JOB_POLL_INTERVAL_SECONDS", 10)
+    try:
+        interval = int(raw_value)
+    except (TypeError, ValueError):
+        return 10
+    return interval if interval > 0 else 10
+
+
+def _build_reference_uri(reference):
+    path_value = str((reference or {}).get("path", "") or "").strip()
+    if path_value:
+        return path_value
+
+    storage_key = str((reference or {}).get("storage_key", "") or "").strip()
+    if not storage_key:
+        return ""
+
+    try:
+        return build_s3_uri(storage_key)
+    except Exception:
+        return storage_key
+
+
 def add_generation_itf_references(project, actor, state, uploaded_files):
     references = state.setdefault("itf_reference_files", [])
     added_count = 0
@@ -126,6 +160,7 @@ def add_generation_itf_references(project, actor, state, uploaded_files):
                 "size": uploaded_file.size,
                 "extension": extension,
                 "storage_key": storage_key,
+                "path": _build_reference_uri({"storage_key": storage_key}),
             }
         )
         added_count += 1
@@ -335,6 +370,12 @@ def get_latest_detail(document):
     return document.details.filter(is_deleted="N").order_by("-created_at", "-sn").first()
 
 
+def get_highest_detail_sn(document):
+    if document is None:
+        return None
+    return document.details.filter(is_deleted="N").order_by("-sn").first()
+
+
 def get_detail_by_sn(document, detail_sn):
     return document.details.filter(sn=detail_sn, is_deleted="N").order_by("-created_at", "-sn").first()
 
@@ -390,10 +431,26 @@ def has_any_confirmed_initial_document(project):
     ).exclude(version="0").exists()
 
 
+def has_all_generated_document_types(project):
+    if project is None:
+        return False
+    generated_count = (
+        Document.objects.filter(
+            project=project,
+            document_type_id__in=get_document_code_sequence(),
+        )
+        .exclude(version="0")
+        .values_list("document_type_id", flat=True)
+        .distinct()
+        .count()
+    )
+    return generated_count >= len(get_document_code_sequence())
+
+
 def can_start_initial_generation(project, user):
     if project is None or user is None or not is_project_manager(project, user):
         return False
-    return not has_any_confirmed_initial_document(project)
+    return not has_all_generated_document_types(project)
 
 
 def has_active_generation_session(state):
@@ -411,7 +468,272 @@ def has_active_generation_session(state):
 def can_access_initial_generation(project, user, state):
     if project is None or user is None or not is_project_manager(project, user):
         return False
-    return has_active_generation_session(state) or not has_any_confirmed_initial_document(project)
+    return has_active_generation_session(state) or not has_all_generated_document_types(project)
+
+
+def is_latest_document_for_type(document):
+    if document is None:
+        return False
+    latest_document = (
+        Document.objects.filter(
+            project=document.project,
+            document_type_id=document.document_type_id,
+        )
+        .order_by("-sn")
+        .first()
+    )
+    return latest_document is not None and latest_document.sn == document.sn
+
+
+def is_latest_detail_for_document(document, detail):
+    if document is None or detail is None:
+        return False
+    latest_detail = get_highest_detail_sn(document)
+    return latest_detail is not None and latest_detail.sn == detail.sn
+
+
+def _build_fastapi_generate_url():
+    base_url = get_fastapi_base_url()
+    if not base_url:
+        raise ValueError("FastAPI base URL is not configured.")
+    return f"{base_url}/generate"
+
+
+def request_fastapi_generate(payload):
+    request = Request(
+        _build_fastapi_generate_url(),
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=FASTAPI_GENERATE_TIMEOUT_SECONDS) as response:
+        body = response.read().decode("utf-8") or "{}"
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return {"raw": body}
+
+
+def extract_fastapi_error_message(exc):
+    if isinstance(exc, HTTPError):
+        try:
+            body = exc.read().decode("utf-8")
+        except Exception:
+            body = ""
+        if body:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+                if isinstance(detail, str) and detail.strip():
+                    return f"FastAPI error {exc.code}: {detail.strip()}"
+                if isinstance(detail, list) and detail:
+                    first_detail = detail[0]
+                    if isinstance(first_detail, dict):
+                        message = first_detail.get("msg") or first_detail.get("message")
+                        if message:
+                            return f"FastAPI error {exc.code}: {message}"
+        return f"FastAPI error {exc.code}: {exc.reason}"
+    if isinstance(exc, URLError):
+        reason = getattr(exc, "reason", None)
+        return f"FastAPI connection failed: {reason or exc}"
+    if isinstance(exc, ValueError):
+        return str(exc)
+    return str(exc)
+
+
+def get_generation_reference_uris(state):
+    uris = []
+    for reference in get_generation_itf_references(state):
+        uri = _build_reference_uri(reference)
+        if uri:
+            uris.append(uri)
+    return uris
+
+#### fast api 요청 payload 만들기
+def build_generation_request_payload(project, state, document_code, *, update_mode="N", selected_files=None):
+    files = selected_files if selected_files is not None else get_generation_selected_files(project, state)
+    image_list = get_generation_reference_uris(state) if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE else []
+    return {
+        "project_sn": project.sn,
+        "docs_cd": "SRS",
+        # "docs_cd": document_code,
+        "udt_yn": update_mode,
+        "file_list": [project_file.sn for project_file in files],
+        "image_list": image_list,
+        "etc": {"debug": True},
+        # "etc": {"debug": bool(getattr(settings, "DEBUG", False))},
+    }
+
+
+def build_auto_apply_request_payload(project, document_code, selected_files):
+    return {
+        "project_sn": project.sn,
+        "docs_cd": document_code,
+        "udt_yn": "Y",
+        "file_list": [project_file.sn for project_file in selected_files],
+        "image_list": [],
+        "etc": {"debug": bool(getattr(settings, "DEBUG", False))},
+    }
+
+
+def _document_job_queryset(project, document_code, *, initial_only=False):
+    queryset = Document.objects.filter(project=project, document_type_id=document_code).select_related(
+        "project",
+        "document_type",
+        "created_by",
+        "updated_by",
+        "possession_user",
+    )
+    if initial_only:
+        queryset = queryset.filter(version="0")
+    return queryset
+
+
+def get_generation_draft_document(project, state, document_code=None):
+    if project is None:
+        return None
+    target_code = document_code or get_current_generation_code(state)
+    if not target_code:
+        return None
+    target_sn = state.get("draft_documents", {}).get(target_code)
+    if not target_sn:
+        return None
+    return (
+        _document_job_queryset(project, target_code, initial_only=True)
+        .filter(sn=target_sn)
+        .first()
+    )
+
+
+def set_generation_draft_document(state, document):
+    if document is None:
+        return state
+    state.setdefault("draft_documents", {})[document.document_type_id] = document.sn
+    return state
+
+
+def clear_generation_draft_document(state, document_code):
+    state.setdefault("draft_documents", {}).pop(document_code, None)
+    return state
+
+
+def find_document_job(
+    project,
+    document_code,
+    *,
+    tracking_document_sn=None,
+    initial_only=False,
+    progress_codes=None,
+):
+    if project is None:
+        return None
+    queryset = _document_job_queryset(project, document_code, initial_only=initial_only)
+    if progress_codes:
+        queryset = queryset.filter(progress_status_id__in=progress_codes)
+    if tracking_document_sn:
+        tracked_document = queryset.filter(sn=tracking_document_sn).first()
+        if tracked_document is not None:
+            return tracked_document
+    return queryset.order_by("-updated_at", "-created_at", "-sn").first()
+
+
+def wait_for_document_job(
+    project,
+    document_code,
+    *,
+    tracking_document_sn=None,
+    initial_only=False,
+    timeout_seconds=3,
+    interval_seconds=0.25,
+):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        document = find_document_job(
+            project,
+            document_code,
+            tracking_document_sn=tracking_document_sn,
+            initial_only=initial_only,
+        )
+        if document is not None:
+            return document
+        time.sleep(interval_seconds)
+    return find_document_job(
+        project,
+        document_code,
+        tracking_document_sn=tracking_document_sn,
+        initial_only=initial_only,
+    )
+
+
+def get_running_initial_document(project, document_code, *, tracking_document_sn=None):
+    return find_document_job(
+        project,
+        document_code,
+        tracking_document_sn=tracking_document_sn,
+        initial_only=True,
+        progress_codes=RUNNING_PROGRESS_CODES,
+    )
+
+
+def get_running_document(project, document_code, *, tracking_document_sn=None):
+    return find_document_job(
+        project,
+        document_code,
+        tracking_document_sn=tracking_document_sn,
+        progress_codes=RUNNING_PROGRESS_CODES,
+    )
+
+
+def get_running_history_job(project, document_code):
+    initial_document = get_running_initial_document(project, document_code)
+    if initial_document is not None:
+        return "initial", initial_document
+    running_document = get_running_document(project, document_code)
+    if running_document is not None:
+        return "auto_apply", running_document
+    return None, None
+
+
+def start_initial_generation_job(project, actor, state):
+    document_code = get_current_generation_code(state)
+    if not document_code:
+        return {"status": "error", "document": None, "message": "생성할 산출물 단계를 찾지 못했습니다."}
+
+    running_document = get_running_initial_document(project, document_code)
+    if running_document is not None:
+        set_generation_draft_document(state, running_document)
+        return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
+
+    payload = build_generation_request_payload(project, state, document_code, update_mode="N")
+    try:
+        request_fastapi_generate(payload)
+    except (HTTPError, URLError, ValueError) as exc:
+        return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
+    tracked_document = wait_for_document_job(project, document_code, initial_only=True)
+    if tracked_document is None:
+        return {"status": "error", "document": None, "message": "문서 생성 작업을 시작하지 못했습니다."}
+
+    set_generation_draft_document(state, tracked_document)
+    return {"status": "started", "document": tracked_document, "message": "문서 생성을 요청했습니다."}
+
+
+def start_auto_apply_job(project, document_code, selected_files):
+    running_document = get_running_document(project, document_code)
+    if running_document is not None:
+        return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
+
+    payload = build_auto_apply_request_payload(project, document_code, selected_files)
+    try:
+        request_fastapi_generate(payload)
+    except (HTTPError, URLError, ValueError) as exc:
+        return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
+    tracked_document = wait_for_document_job(project, document_code)
+    if tracked_document is None:
+        return {"status": "error", "document": None, "message": "회의 내용 자동 적용 작업을 시작하지 못했습니다."}
+    return {"status": "started", "document": tracked_document, "message": "회의 내용 자동 적용을 요청했습니다."}
 
 
 def build_generation_lines(project, document_code, inputs):

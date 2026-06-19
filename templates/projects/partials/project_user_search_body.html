@@ -3,6 +3,12 @@
   <input type="hidden" name="project_target_role" value="{{ project_target_role|default:'manager' }}">
   <input type="hidden" name="q" value="{{ query }}">
   <input type="hidden" name="field" value="{{ search_field }}">
+  <input type="hidden" name="open_project_form" value="1">
+  <input type="hidden" name="project_form_mode" value="{{ project_form_mode|default:'create' }}">
+  <input type="hidden" name="project_sn" value="{{ project_form_project_sn }}">
+  <input type="hidden" name="project_name" value="{{ project_form_name }}">
+  <input type="hidden" name="manager_user_ids" value="{{ project_form_manager_user_ids }}">
+  <input type="hidden" name="member_user_ids" value="{{ project_form_member_user_ids }}">
 
   <div class="flex items-center justify-between">
     <h4 class="text-sm font-semibold text-slate-900">

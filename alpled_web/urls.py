@@ -14,8 +14,10 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+from django.conf import settings
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, re_path
+from django.views.static import serve as static_serve
 
 from common.views import set_current_project_view
 from docs.views import (
@@ -35,6 +37,7 @@ from docs.views import (
     document_generate,
     document_history_preview,
     document_history_list,
+    document_job_status,
     document_lock,
     document_request_approval,
     document_restore_revision,
@@ -55,6 +58,7 @@ urlpatterns = [
     path("files/", file_list, name="file_list"),
     path("docs/generate/", document_generate, name="doc_generate"),
     path("docs/history/", document_history_list, name="doc_history_list"),
+    path("docs/jobs/status/", document_job_status, name="doc_job_status"),
     path("docs/documents/<int:document_sn>/", document_detail, name="doc_detail"),
     path("docs/documents/<int:document_sn>/lock/", document_lock, name="doc_lock"),
     path("docs/documents/<int:document_sn>/save/", document_save, name="doc_save"),
@@ -76,3 +80,8 @@ urlpatterns = [
     path("projects/current/", set_current_project_view, name="set_current_project"),
     path('admin/', admin.site.urls),
 ]
+
+if getattr(settings, "SERVE_STATIC_LOCALLY", False):
+    urlpatterns += [
+        re_path(r"^static/(?P<path>.*)$", static_serve, {"document_root": str(settings.BASE_DIR / "static")}),
+    ]

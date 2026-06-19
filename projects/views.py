@@ -13,6 +13,8 @@ from .models import Project, ProjectUserRole
 
 
 DEFAULT_DOCUMENT_CODE = "DOC_SRS"
+
+
 def _get_admin_user():
     return User.objects.filter(user_id="admin").first()
 
@@ -80,6 +82,7 @@ def _build_project_rows(projects):
                 "manager_name": manager_role.user.name if manager_role else "미지정",
                 "created_at": project.created_at,
                 "is_deleted": project.is_deleted,
+                "edit_url": f"{reverse('project_list')}?open_project_form=1&project_form_mode=edit&project_sn={project.sn}",
             }
         )
     return rows
@@ -91,8 +94,87 @@ def _parse_user_ids(raw_value):
     return [value.strip() for value in raw_value.split(",") if value.strip()]
 
 
+def _get_project_roles(actor):
+    role_manager, _ = Code.objects.get_or_create(
+        code="ROLE_MANAGER",
+        defaults={"name": "관리자", "created_by": actor, "updated_by": actor},
+    )
+    role_member, _ = Code.objects.get_or_create(
+        code="ROLE_MEMBER",
+        defaults={"name": "멤버", "created_by": actor, "updated_by": actor},
+    )
+    return role_manager, role_member
+
+
+def _build_selected_user_rows(user_ids):
+    users_by_id = User.objects.in_bulk(user_ids, field_name="user_id")
+    rows = []
+    for user_id in user_ids:
+        user = users_by_id.get(user_id)
+        if user is None:
+            continue
+        rows.append(
+            {
+                "user_id": user.user_id,
+                "name": user.name,
+                "position": user.position or "",
+                "department": user.department or "",
+            }
+        )
+    return rows
+
+
+def _get_project_form_state(request):
+    form_mode = request.GET.get("project_form_mode", "create")
+    if form_mode not in {"create", "edit"}:
+        form_mode = "create"
+
+    project_sn = request.GET.get("project_sn", "").strip()
+    project = Project.objects.filter(sn=project_sn).first() if project_sn else None
+    if form_mode == "edit" and project is None:
+        form_mode = "create"
+        project_sn = ""
+
+    project_name = request.GET.get("project_name", "").strip()
+    manager_user_ids = _parse_user_ids(request.GET.get("manager_user_ids", ""))
+    member_user_ids = _parse_user_ids(request.GET.get("member_user_ids", ""))
+
+    if form_mode == "edit" and project is not None and not request.GET.get("manager_user_ids") and not request.GET.get("member_user_ids"):
+        manager_user_ids = list(
+            ProjectUserRole.objects.filter(project=project, role_id="ROLE_MANAGER")
+            .select_related("user")
+            .order_by("sn")
+            .values_list("user__user_id", flat=True)
+        )
+        member_user_ids = list(
+            ProjectUserRole.objects.filter(project=project, role_id="ROLE_MEMBER")
+            .select_related("user")
+            .order_by("sn")
+            .values_list("user__user_id", flat=True)
+        )
+    if form_mode == "edit" and project is not None and not project_name:
+        project_name = project.name
+
+    return {
+        "open_project_form": request.GET.get("open_project_form") == "1" or request.GET.get("open_project_user_search") == "1",
+        "project_form_mode": form_mode,
+        "project_form_project_sn": str(project.sn) if project is not None else project_sn,
+        "project_form_project_id": f"PRJ{project.sn:03d}" if project is not None else "",
+        "project_form_created_at": project.created_at if project is not None else None,
+        "project_form_name": project_name,
+        "project_form_manager_user_ids": ",".join(manager_user_ids),
+        "project_form_member_user_ids": ",".join(member_user_ids),
+        "project_form_manager_users": _build_selected_user_rows(manager_user_ids),
+        "project_form_member_users": _build_selected_user_rows(member_user_ids),
+        "project_form_title": "프로젝트 상세 / 수정" if form_mode == "edit" else "프로젝트 등록",
+        "project_form_subtitle": "프로젝트와 담당 인원을 함께 관리합니다." if form_mode == "edit" else "프로젝트와 담당 인원을 함께 등록합니다.",
+        "project_form_submit_label": "수정" if form_mode == "edit" else "프로젝트 등록",
+    }
+
+
 @transaction.atomic
-def _create_project(request):
+def _save_project(request, *, project=None):
+    actor = request.user
     project_name = request.POST.get("project_name", "").strip()
     manager_user_ids = list(dict.fromkeys(_parse_user_ids(request.POST.get("manager_user_ids", ""))))
     member_user_ids = list(dict.fromkeys(_parse_user_ids(request.POST.get("member_user_ids", ""))))
@@ -118,33 +200,28 @@ def _create_project(request):
         return False
 
     try:
-        admin_user = _get_admin_user()
-        if admin_user is None:
-            messages.error(request, "관리자 계정을 찾을 수 없습니다.")
-            return False
-        role_manager, _ = Code.objects.get_or_create(
-            code="ROLE_MANAGER",
-            defaults={"name": "관리자", "created_by": admin_user, "updated_by": admin_user},
-        )
-        role_member, _ = Code.objects.get_or_create(
-            code="ROLE_MEMBER",
-            defaults={"name": "멤버", "created_by": admin_user, "updated_by": admin_user},
-        )
+        role_manager, role_member = _get_project_roles(actor)
 
-        project = Project.objects.create(
-            name=project_name,
-            is_deleted=YesNoChoices.NO,
-            created_by=admin_user,
-            updated_by=admin_user,
-        )
+        if project is None:
+            project = Project.objects.create(
+                name=project_name,
+                is_deleted=YesNoChoices.NO,
+                created_by=actor,
+                updated_by=actor,
+            )
+        else:
+            project.name = project_name
+            project.updated_by = actor
+            project.save(update_fields=["name", "updated_by"])
+            ProjectUserRole.objects.filter(project=project).delete()
 
         for user_id in manager_user_ids:
             ProjectUserRole.objects.create(
                 project=project,
                 user=users_by_id[user_id],
                 role=role_manager,
-                created_by=admin_user,
-                updated_by=admin_user,
+                created_by=actor,
+                updated_by=actor,
             )
 
         for user_id in member_user_ids:
@@ -152,14 +229,14 @@ def _create_project(request):
                 project=project,
                 user=users_by_id[user_id],
                 role=role_member,
-                created_by=admin_user,
-                updated_by=admin_user,
+                created_by=actor,
+                updated_by=actor,
             )
     except Exception:
         messages.error(request, "프로젝트를 저장할 수 없습니다.")
         return False
 
-    messages.success(request, "프로젝트가 등록되었습니다.")
+    messages.success(request, "프로젝트가 수정되었습니다." if project and request.POST.get("action") == "update_project" else "프로젝트가 등록되었습니다.")
     return True
 
 
@@ -171,7 +248,15 @@ def project_list(request):
         return _redirect_non_admin(request)
 
     if request.method == "POST":
-        if _create_project(request):
+        action = request.POST.get("action", "create_project")
+        target_project = None
+        if action == "update_project":
+            project_sn = request.POST.get("project_sn", "").strip()
+            target_project = Project.objects.filter(sn=project_sn).first()
+            if target_project is None:
+                messages.error(request, "수정할 프로젝트를 찾을 수 없습니다.")
+                return redirect("project_list")
+        if _save_project(request, project=target_project):
             return redirect("project_list")
         return redirect("project_list")
 
@@ -193,6 +278,7 @@ def project_list(request):
     search_users, user_active, user_search_field, user_query = _search_users(request)
     open_project_user_search = request.GET.get("open_project_user_search") == "1"
     project_target_role = request.GET.get("project_target_role", "manager")
+    project_form_state = _get_project_form_state(request)
 
     context = {
         "active_menu": "projects",
@@ -210,5 +296,6 @@ def project_list(request):
         "open_project_user_search": open_project_user_search,
         "project_target_role": project_target_role,
         "admin_user": _get_admin_user(),
+        **project_form_state,
     }
     return render(request, "projects/project_list.html", context)

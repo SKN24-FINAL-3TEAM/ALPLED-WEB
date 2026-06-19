@@ -34,7 +34,7 @@
           {% if include_requester_search %}
             <input type="text" name="requester" value="{{ requester_query }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 shadow-sm placeholder:text-slate-400" placeholder="요청자명을 입력해 주세요.">
           {% else %}
-            <div class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-500">멤버 권한은 요청자 검색이 비활성화됩니다.</div>
+            <input type="text" name="requester" value="{{ requester_query }}" style="display:none;">
           {% endif %}
         </div>
         <div class="flex justify-end">
