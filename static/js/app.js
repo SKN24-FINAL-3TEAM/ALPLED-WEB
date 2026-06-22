@@ -1106,6 +1106,12 @@
 
     const openTrigger = event.target.closest("[data-modal-target]");
     if (openTrigger) {
+      const modalToHide = openTrigger.dataset.modalSwitchHide
+        ? document.getElementById(openTrigger.dataset.modalSwitchHide)
+        : null;
+      if (modalToHide) {
+        hideModal(modalToHide);
+      }
       showModal(document.getElementById(openTrigger.dataset.modalTarget));
       return;
     }

@@ -38,7 +38,7 @@
 
     <div class="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <p class="text-sm font-semibold text-slate-900">요청 내용</p>
-      <p class="mt-2 text-sm leading-6 text-slate-700">{{ approval.request_content }}</p>
+      <p class="mt-2 text-sm leading-6 text-slate-700">{{ approval.request_content|default:"요청 내용이 없습니다." }}</p>
       {% if approval.rejection_reason %}
         <div class="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800">
           반려 사유: {{ approval.rejection_reason }}
@@ -51,36 +51,26 @@
     <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <h2 class="text-lg font-semibold text-slate-900">변경 전후 비교</h2>
-        <form method="post" action="{% url 'doc_approval_consistency' approval.sn %}">
-          {% csrf_token %}
-          <button type="submit" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-            정합성 자동 검토
-          </button>
-        </form>
+        {% if can_take_action %}
+          <form method="post" action="{% url 'doc_approval_consistency' approval.sn %}">
+            {% csrf_token %}
+            <button type="submit" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+              정합성 자동검토
+            </button>
+          </form>
+        {% endif %}
       </div>
 
       <div class="mt-6 grid gap-6 lg:grid-cols-2">
         <div class="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5">
-          <p class="mb-3 text-sm font-semibold text-slate-900">이전버전 {% if previous_document %}: {{ previous_document.version }}{% endif %}</p>
-          <pre class="whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ previous_text|default:"비교할 이전 버전이 없습니다." }}</pre>
+          <p class="mb-3 text-sm font-semibold text-slate-900">이전 버전{% if previous_version %}: {{ previous_version }}{% elif previous_document %}: {{ previous_document.version }}{% endif %}</p>
+          <pre class="max-h-[28rem] overflow-auto whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ previous_text|default:"비교할 이전 버전이 없습니다." }}</pre>
         </div>
         <div class="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5">
-          <p class="mb-3 text-sm font-semibold text-slate-900">수정버전</p>
-          <pre class="whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ updated_text|default:"수정된 내용이 없습니다." }}</pre>
+          <p class="mb-3 text-sm font-semibold text-slate-900">수정 버전: {{ document.version }}</p>
+          <pre class="max-h-[28rem] overflow-auto whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ updated_text|default:"수정된 내용이 없습니다." }}</pre>
         </div>
       </div>
-
-      {% if review %}
-        <div class="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-5">
-          <p class="text-base font-semibold text-blue-900">{{ review.title }}</p>
-          <p class="mt-2 text-sm text-blue-800">{{ review.summary }}</p>
-          <ul class="mt-3 space-y-2 text-sm text-blue-800">
-            {% for item in review.items %}
-              <li>• {{ item }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-      {% endif %}
 
       {% if can_take_action %}
         <div class="mt-6 flex flex-wrap justify-end gap-3">
@@ -100,6 +90,47 @@
   {% endif %}
 </div>
 
+{% if review %}
+  <div id="consistency-review-modal" data-modal-root class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4">
+    <div class="relative w-full max-w-2xl">
+      <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-xl">
+        <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div>
+            <h3 class="text-lg font-semibold text-slate-900">정합성 검증 결과</h3>
+            <p class="mt-1 text-sm text-slate-500">이전 버전과 수정 버전을 기준으로 자동 검토했습니다.</p>
+          </div>
+          <button type="button" data-modal-hide="consistency-review-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+            <span class="text-3xl leading-none">&times;</span>
+          </button>
+        </div>
+        <div class="px-6 py-6">
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 p-5">
+            <p class="text-sm font-semibold text-slate-900">{{ review.summary }}</p>
+            <ul class="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+              {% for item in review.items %}
+                <li>• {{ item }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          <div class="mt-6 flex flex-wrap justify-end gap-3">
+            {% if can_take_action %}
+              <button type="button" data-modal-target="approval-approve-modal" data-modal-switch-hide="consistency-review-modal" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                승인
+              </button>
+              <button type="button" data-modal-target="approval-reject-modal" data-modal-switch-hide="consistency-review-modal" class="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700">
+                반려
+              </button>
+            {% endif %}
+            <button type="button" data-modal-hide="consistency-review-modal" class="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
 {% if can_take_action %}
   <div id="approval-approve-modal" data-modal-root class="fixed inset-0 z-50 {% if open_approve_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
     <div class="relative w-full max-w-xl">
@@ -107,7 +138,7 @@
         <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
           <div>
             <h3 class="text-lg font-semibold text-slate-900">승인</h3>
-            <p class="mt-1 text-sm text-slate-500">생성할 새 버전명을 입력해 주세요.</p>
+            <p class="mt-1 text-sm text-slate-500">생성할 새 버전명과 수정 내용을 입력해 주세요.</p>
           </div>
           <button type="button" data-modal-hide="approval-approve-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
             <span class="text-3xl leading-none">&times;</span>
@@ -116,9 +147,18 @@
         <div class="px-6 py-6">
           <form method="post" action="{% url 'doc_approval_approve' approval.sn %}" class="space-y-4">
             {% csrf_token %}
-            <label class="text-sm font-semibold text-slate-700" for="new_version">새 버전명</label>
-            <input id="new_version" type="text" name="new_version" class="w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-sm" placeholder="예: 1.1">
-            <div class="flex justify-end">
+            <div>
+              <label class="text-sm font-semibold text-slate-700" for="new_version">새 버전명</label>
+              <input id="new_version" type="text" name="new_version" class="mt-2 w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-sm" placeholder="예: 1.1">
+            </div>
+            <div>
+              <label class="text-sm font-semibold text-slate-700" for="modification_content">수정 내용</label>
+              <input id="modification_content" type="text" name="modification_content" class="mt-2 w-full rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-900 shadow-sm" placeholder="수정 내용을 입력해 주세요.">
+            </div>
+            <div class="flex justify-end gap-3">
+              <button type="button" data-modal-hide="approval-approve-modal" class="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                취소
+              </button>
               <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
                 승인
               </button>
@@ -146,7 +186,10 @@
             {% csrf_token %}
             <label class="text-sm font-semibold text-slate-700" for="rejection_reason">반려 사유</label>
             <textarea id="rejection_reason" name="rejection_reason" rows="4" class="w-full rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-900 shadow-sm" placeholder="반려 사유를 입력하세요."></textarea>
-            <div class="flex justify-end">
+            <div class="flex justify-end gap-3">
+              <button type="button" data-modal-hide="approval-reject-modal" class="rounded-lg border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                취소
+              </button>
               <button type="submit" class="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700">
                 반려
               </button>

@@ -57,6 +57,7 @@
             <th class="px-6 py-4 text-center font-semibold">승인 상태</th>
             <th class="px-6 py-4 text-center font-semibold">요청 내용</th>
             <th class="px-6 py-4 text-center font-semibold">요청 일시</th>
+            <th class="px-6 py-4 text-center font-semibold">처리</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200 text-slate-700">
@@ -72,10 +73,15 @@
               <td class="px-6 py-4 text-center">{{ row.status_name }}</td>
               <td class="px-6 py-4 text-center">{{ row.request_content }}</td>
               <td class="px-6 py-4 text-center">{{ row.created_at|date:"Y-m-d H:i" }}</td>
+              <td class="px-6 py-4 text-center">
+                <a href="{{ row.detail_url }}" class="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                  {% if is_manager and row.status_code == "APRV_REQ" %}검토{% else %}확인{% endif %}
+                </a>
+              </td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="6" class="px-6 py-20 text-center text-sm text-slate-500">
+              <td colspan="7" class="px-6 py-20 text-center text-sm text-slate-500">
                 {% if current_project %}승인 요청 내역이 없습니다.{% else %}선택 가능한 프로젝트가 없습니다.{% endif %}
               </td>
             </tr>

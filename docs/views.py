@@ -1281,15 +1281,31 @@ def approval_detail(request, approval_sn):
     if not is_manager and approval.created_by_id != actor.sn:
         raise Http404
 
-    previous_document = latest_confirmed_document(current_project, document.document_type_id)
-    previous_detail = get_latest_detail(previous_document) if previous_document else None
+    previous_detail = (
+        document.details.filter(is_deleted="N", created_at__lt=approval.detail.created_at)
+        .exclude(sn=approval.detail_id)
+        .order_by("-created_at", "-sn")
+        .first()
+    )
+    previous_document = previous_detail.document if previous_detail else latest_confirmed_document(
+        current_project,
+        document.document_type_id,
+        exclude_document_sn=document.sn,
+    )
+    if previous_detail is None and previous_document:
+        previous_detail = get_latest_detail(previous_document)
+    previous_version = previous_document.version if previous_document else None
     try:
         previous_text = extract_text_from_docx(get_document_detail_bytes(previous_detail))
         updated_text = extract_text_from_docx(get_document_detail_bytes(approval.detail))
     except ValueError:
         messages.error(request, _legacy_detail_error_message())
         return redirect(reverse("doc_approval_list"))
-    review = build_consistency_review(approval) if request.GET.get("consistency") == "1" else None
+    review = (
+        build_consistency_review(approval, previous_text=previous_text, updated_text=updated_text)
+        if request.GET.get("consistency") == "1"
+        else None
+    )
 
     context = {
         "active_menu": "approvals",
@@ -1299,6 +1315,7 @@ def approval_detail(request, approval_sn):
         "document": document,
         "is_manager": is_manager,
         "previous_document": previous_document,
+        "previous_version": previous_version,
         "previous_text": previous_text,
         "updated_text": updated_text,
         "review": review,
@@ -1341,8 +1358,10 @@ def approval_approve(request, approval_sn):
         messages.error(request, "동일한 산출물 종류에 같은 버전이 이미 존재합니다. 새 버전명을 다시 입력해 주세요.")
         return redirect(_approval_detail_redirect(approval, modal="approve"))
 
+    modification_content = request.POST.get("modification_content", "").strip()
+
     try:
-        approved_document, _ = approve_request(approval, actor, new_version)
+        approved_document, _ = approve_request(approval, actor, new_version, modification_content=modification_content)
     except ValueError:
         messages.error(request, _legacy_detail_error_message())
         return redirect(reverse("doc_approval_detail", args=[approval.approval_sn]))

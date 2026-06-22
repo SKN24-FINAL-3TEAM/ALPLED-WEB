@@ -1,3 +1,4 @@
+import difflib
 import io
 import json
 import os
@@ -423,14 +424,15 @@ def get_latest_pending_approval(document):
     )
 
 
-def latest_confirmed_document(project, document_code):
-    return (
+def latest_confirmed_document(project, document_code, *, exclude_document_sn=None):
+    queryset = (
         Document.objects.filter(project=project, document_type_id=document_code)
         .exclude(version="0")
         .select_related("document_type", "created_by", "possession_user")
-        .order_by("-created_at", "-sn")
-        .first()
     )
+    if exclude_document_sn is not None:
+        queryset = queryset.exclude(sn=exclude_document_sn)
+    return queryset.order_by("-created_at", "-sn").first()
 
 
 def get_document_history_queryset(project, document_code):
@@ -1117,7 +1119,7 @@ def has_document_version(project, document_code, version):
 
 
 @transaction.atomic
-def approve_request(approval, actor, new_version):
+def approve_request(approval, actor, new_version, modification_content=None):
     source_detail = approval.detail
     source_document = source_detail.document
     document, detail = create_document_with_detail(
@@ -1125,7 +1127,7 @@ def approve_request(approval, actor, new_version):
         document_code=source_document.document_type_id,
         actor=actor,
         version=new_version,
-        modification_content=approval.request_content or "승인 반영",
+        modification_content=modification_content or approval.request_content or "승인 반영",
         content_bytes=get_document_detail_bytes(source_detail),
         locked_user=None,
     )
@@ -1467,16 +1469,49 @@ def validate_document_content_token(document, token):
     )
 
 
-def build_consistency_review(approval):
+def build_consistency_review(approval, *, previous_text="", updated_text=""):
+    """승인 요청 화면에서 보여줄 1차 정합성 검토 결과를 생성합니다.
+
+    현재 단계의 검증은 문서 전후 텍스트를 기준으로 한 경량 검증입니다.
+    RFP/회의록 원문 근거 검증이나 산출물별 세부 규칙 검증은 별도 Agent/API 연동이 필요합니다.
+    """
     requester = approval.created_by.name if approval.created_by else "작성자"
+    previous_text = previous_text or ""
+    updated_text = updated_text or ""
+
+    diff = list(difflib.unified_diff(
+        previous_text.splitlines(),
+        updated_text.splitlines(),
+        lineterm="",
+    ))
+    added_count = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+    removed_count = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+
+    items = []
+    if not previous_text:
+        items.append("이전 버전이 없어 수정본 단독 기준으로 검토했습니다.")
+    elif not diff:
+        items.append("이전 버전과 수정본의 텍스트 변경 사항이 없습니다.")
+    else:
+        items.append(f"수정본 기준 추가 {added_count}건, 삭제 {removed_count}건의 텍스트 변경이 감지되었습니다.")
+
+    request_content = approval.request_content or ""
+    if request_content and request_content in updated_text:
+        items.append("요청 내용이 수정본 본문에 직접 포함되어 있습니다.")
+    elif request_content:
+        items.append("요청 내용과 수정본 본문의 직접 일치 문구는 확인되지 않아 수동 확인이 필요합니다.")
+    else:
+        items.append("요청 내용이 비어 있어 변경 근거 확인이 필요합니다.")
+
+    if updated_text.strip():
+        items.append("수정본 문서 텍스트 추출은 정상적으로 수행되었습니다.")
+    else:
+        items.append("수정본에서 추출된 텍스트가 없어 파일 저장 또는 문서 파싱 상태를 확인해야 합니다.")
+
     return {
         "title": "정합성 자동 검토 결과",
         "summary": f"{requester}의 수정 요청을 검토했습니다.",
-        "items": [
-            "수정본과 직전 버전 간 문서 구조 차이는 정상 범위입니다.",
-            "회의록 또는 RFP에서 추출한 변경 사유와 충돌하는 항목은 발견되지 않았습니다.",
-            "최종 승인 전 오탈자와 버전명만 다시 확인하면 됩니다.",
-        ],
+        "items": items,
     }
 
 
