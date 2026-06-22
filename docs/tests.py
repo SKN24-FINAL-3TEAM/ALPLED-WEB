@@ -88,7 +88,7 @@ class DocumentWorkflowViewTests(TestCase):
         )
         self.erd_code, _ = Code.objects.get_or_create(
             code="DOC_ERD",
-            defaults={"name": "엔티티 관계 모델 설계서", "created_by": self.user, "updated_by": self.user},
+            defaults={"name": "엔티티 관계 모형 설계서", "created_by": self.user, "updated_by": self.user},
         )
         self.db_code, _ = Code.objects.get_or_create(
             code="DOC_DB",
@@ -96,7 +96,7 @@ class DocumentWorkflowViewTests(TestCase):
         )
         self.ts_code, _ = Code.objects.get_or_create(
             code="DOC_TS",
-            defaults={"name": "통합 테스트 시나리오", "created_by": self.user, "updated_by": self.user},
+            defaults={"name": "통합 시험 시나리오", "created_by": self.user, "updated_by": self.user},
         )
 
         self.file_rfp_code, _ = Code.objects.get_or_create(
