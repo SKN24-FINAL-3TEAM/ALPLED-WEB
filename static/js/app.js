@@ -18,6 +18,21 @@
     document.body.classList.remove("overflow-hidden");
   }
 
+  function resetUserCreateModal(modal) {
+    if (!modal?.matches("#user-create-modal")) return;
+    const form = modal.querySelector("[data-user-create-form]");
+    if (!form) return;
+
+    form.querySelectorAll("input:not([type='hidden']):not([readonly])").forEach((input) => {
+      input.value = "";
+    });
+    const activeSelect = form.querySelector("select[name='use_yn']");
+    if (activeSelect) {
+      activeSelect.value = "Y";
+    }
+    form.querySelector("[data-user-create-errors]")?.remove();
+  }
+
   function getAlertRoot() {
     return document.getElementById("app-alert-root");
   }
@@ -489,6 +504,8 @@
 
     setValue("#user-detail-sn", row.dataset.userSn);
     setValue("#user-detail-id", row.dataset.userId);
+    setValue("#user-detail-update-sn", row.dataset.userSn);
+    setValue("#user-detail-delete-sn", row.dataset.userSn);
     setValue("#user-detail-name", row.dataset.userName);
     setValue("#user-detail-department", row.dataset.userDepartment);
     setValue("#user-detail-position", row.dataset.userPosition);
@@ -1136,6 +1153,7 @@
       if (modal?.dataset.jobProgressRoot !== undefined) {
         return;
       }
+      resetUserCreateModal(modal);
       hideModal(modal);
       return;
     }
@@ -1164,6 +1182,7 @@
         resolveNotice();
         return;
       }
+      resetUserCreateModal(event.target);
       hideModal(event.target);
       return;
     }
@@ -1325,6 +1344,28 @@
     if (!projectForm) return;
 
     syncAllProjectRoles();
+    const actionInput = projectForm.querySelector("[data-project-form-action]");
+    const isDeleteAction = event.submitter?.matches("[data-project-delete-submit]");
+    const isEditMode = actionInput?.value === "update_project";
+
+    if (isDeleteAction) {
+      event.preventDefault();
+      if (actionInput) {
+        actionInput.value = "delete_project";
+      }
+      const confirmed = await showConfirmDialog({
+        title: "프로젝트 삭제",
+        message: "프로젝트를 삭제하시겠습니까?",
+        confirmText: "삭제",
+        tone: "danger",
+      });
+      if (confirmed) {
+        resubmitForm(projectForm, event.submitter);
+      } else if (actionInput) {
+        actionInput.value = "update_project";
+      }
+      return;
+    }
 
     const projectNameField = projectForm.querySelector("#project-name");
     const projectName = projectNameField ? projectNameField.value.trim() : "";
@@ -1344,9 +1385,9 @@
 
     event.preventDefault();
     const confirmed = await showConfirmDialog({
-      title: "프로젝트 등록",
-      message: "프로젝트를 등록하시겠습니까?",
-      confirmText: "등록",
+      title: isEditMode ? "프로젝트 수정" : "프로젝트 등록",
+      message: isEditMode ? "프로젝트를 수정하시겠습니까?" : "프로젝트를 등록하시겠습니까?",
+      confirmText: isEditMode ? "수정" : "등록",
       tone: "primary",
     });
     if (confirmed) {
@@ -1384,7 +1425,10 @@
       resolveNotice();
       return;
     }
-    document.querySelectorAll("[data-modal-root].flex").forEach(hideModal);
+    document.querySelectorAll("[data-modal-root].flex").forEach((modal) => {
+      resetUserCreateModal(modal);
+      hideModal(modal);
+    });
   });
 
   const projectPageState = document.getElementById("project-page-state");

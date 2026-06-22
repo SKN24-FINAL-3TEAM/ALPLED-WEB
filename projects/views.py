@@ -4,6 +4,8 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.http import urlencode
+from common.project_selection import get_safe_next_url
 
 from common.models import Code, YesNoChoices
 from common.signals import ensure_initial_reference_data
@@ -21,6 +23,13 @@ def _get_admin_user():
 
 def _get_default_redirect_url():
     return f"{reverse('doc_history_list')}?docs_cd={DEFAULT_DOCUMENT_CODE}"
+
+
+def _get_project_redirect_url(request):
+    next_url = get_safe_next_url(request)
+    if next_url and next_url != "/":
+        return next_url
+    return reverse("project_list")
 
 
 def _redirect_non_admin(request):
@@ -57,35 +66,59 @@ def _search_users(request):
     return list(users[:10]), active, search_field, query
 
 
-def _build_project_rows(projects):
+def _build_project_rows(projects, preserved_querystring=""):
     rows = []
     for project in projects[:10]:
-        manager_role = (
+        manager_names = list(
             ProjectUserRole.objects.filter(project=project, role_id="ROLE_MANAGER")
             .select_related("user")
             .order_by("sn")
-            .first()
+            .values_list("user__name", flat=True)
         )
-        if manager_role is None:
-            manager_role = (
+        if not manager_names:
+            manager_names = list(
                 ProjectUserRole.objects.filter(project=project)
                 .select_related("user")
                 .order_by("sn")
-                .first()
+                .values_list("user__name", flat=True)[:1]
             )
+        edit_query = urlencode(
+            {
+                "open_project_form": "1",
+                "project_form_mode": "edit",
+                "project_sn": project.sn,
+            }
+        )
+        if preserved_querystring:
+            edit_query = f"{preserved_querystring}&{edit_query}"
 
         rows.append(
             {
                 "sn": project.sn,
                 "project_id": f"PRJ{project.sn:03d}",
                 "name": project.name,
-                "manager_name": manager_role.user.name if manager_role else "미지정",
+                "manager_name": ", ".join(manager_names) if manager_names else "미지정",
                 "created_at": project.created_at,
                 "is_deleted": project.is_deleted,
-                "edit_url": f"{reverse('project_list')}?open_project_form=1&project_form_mode=edit&project_sn={project.sn}",
+                "edit_url": f"{reverse('project_list')}?{edit_query}",
             }
         )
     return rows
+
+
+@transaction.atomic
+def _delete_project(request):
+    project_sn = request.POST.get("project_sn", "").strip()
+    target_project = Project.objects.filter(sn=project_sn, is_deleted=YesNoChoices.NO).first()
+    if target_project is None:
+        messages.error(request, "삭제할 프로젝트를 찾을 수 없습니다.")
+        return False
+
+    target_project.is_deleted = YesNoChoices.YES
+    target_project.updated_by = request.user
+    target_project.save(update_fields=["is_deleted", "updated_by"])
+    messages.success(request, "프로젝트가 삭제되었습니다.")
+    return True
 
 
 def _parse_user_ids(raw_value):
@@ -249,21 +282,31 @@ def project_list(request):
 
     if request.method == "POST":
         action = request.POST.get("action", "create_project")
+        if action == "delete_project":
+            _delete_project(request)
+            return redirect(_get_project_redirect_url(request))
+
         target_project = None
         if action == "update_project":
             project_sn = request.POST.get("project_sn", "").strip()
-            target_project = Project.objects.filter(sn=project_sn).first()
+            target_project = Project.objects.filter(sn=project_sn, is_deleted=YesNoChoices.NO).first()
             if target_project is None:
                 messages.error(request, "수정할 프로젝트를 찾을 수 없습니다.")
-                return redirect("project_list")
+                return redirect(_get_project_redirect_url(request))
         if _save_project(request, project=target_project):
-            return redirect("project_list")
-        return redirect("project_list")
+            return redirect(_get_project_redirect_url(request))
+        return redirect(_get_project_redirect_url(request))
 
     query = request.GET.get("q", "").strip()
     search_field = request.GET.get("field", "all")
+    preserved_querystring = urlencode(
+        {
+            "field": search_field,
+            "q": query,
+        }
+    )
 
-    projects = Project.objects.all().order_by("sn")
+    projects = Project.objects.filter(is_deleted=YesNoChoices.NO).order_by("sn")
     if query:
         if search_field == "name":
             projects = projects.filter(name__icontains=query)
@@ -274,7 +317,7 @@ def project_list(request):
                 Q(name__icontains=query) | Q(user_roles__user__name__icontains=query)
             ).distinct()
 
-    project_rows = _build_project_rows(projects)
+    project_rows = _build_project_rows(projects, preserved_querystring)
     search_users, user_active, user_search_field, user_query = _search_users(request)
     open_project_user_search = request.GET.get("open_project_user_search") == "1"
     project_target_role = request.GET.get("project_target_role", "manager")
@@ -285,6 +328,7 @@ def project_list(request):
         "projects": project_rows,
         "search_field": search_field,
         "query": query,
+        "preserved_querystring": preserved_querystring,
         "page_size": request.GET.get("page_size", "10"),
         "status_filter": request.GET.get("detail_status", "all"),
         "title": "프로젝트 관리",

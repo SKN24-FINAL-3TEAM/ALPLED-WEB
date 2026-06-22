@@ -1,10 +1,15 @@
+import re
+from urllib.parse import urlsplit
+
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
+from django.db.models.deletion import ProtectedError
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
 from common.models import YesNoChoices
@@ -18,12 +23,22 @@ from .models import User
 DEFAULT_DOCUMENT_CODE = "DOC_SRS"
 TEMP_PASSWORD = "abc1234"
 TEMP_PASSWORD_REDIRECT_SESSION_KEY = "temp_password_redirect_url"
+USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{7,10}$")
+USER_TEXT_MIN_LENGTH = 2
+USER_TEXT_MAX_LENGTH = 100
 
 
 def _get_authenticated_home_url(user):
     if getattr(user, "is_staff", False):
         return reverse("user_list")
     return f"{reverse('doc_history_list')}?docs_cd={DEFAULT_DOCUMENT_CODE}"
+
+
+def _is_login_destination(url):
+    if not url:
+        return True
+    path = urlsplit(url).path or "/"
+    return path in {"/", reverse("home"), reverse("login")}
 
 
 def _redirect_non_admin(request):
@@ -37,13 +52,12 @@ def _require_admin(request):
     return _redirect_non_admin(request)
 
 
+@never_cache
 def login_view(request):
     ensure_initial_reference_data()
 
-    if request.user.is_authenticated:
-        if request.user.tmpr_pswd_yn == YesNoChoices.YES:
-            return redirect("temp_password_notice")
-        return redirect(_get_authenticated_home_url(request.user))
+    if request.method == "GET" and request.user.is_authenticated:
+        logout(request)
 
     if request.method == "POST":
         user_id = request.POST.get("user_id", "").strip()
@@ -56,7 +70,7 @@ def login_view(request):
             if user is not None and user.is_active:
                 login(request, user)
                 next_url = get_safe_next_url(request)
-                if next_url in {"", "/", reverse("home"), reverse("login")}:
+                if _is_login_destination(next_url):
                     next_url = _get_authenticated_home_url(user)
                 if user.tmpr_pswd_yn == YesNoChoices.YES:
                     request.session[TEMP_PASSWORD_REDIRECT_SESSION_KEY] = next_url
@@ -76,6 +90,7 @@ def login_view(request):
 
 
 @require_POST
+@never_cache
 def logout_view(request):
     logout(request)
     return redirect("home")
@@ -107,6 +122,13 @@ def _build_create_form_data(request=None):
         "position": source.get("position", "").strip(),
         "use_yn": source.get("use_yn", YesNoChoices.YES),
     }
+
+
+def _validate_user_text(value, field_subject):
+    length = len(value)
+    if length < USER_TEXT_MIN_LENGTH or length > USER_TEXT_MAX_LENGTH:
+        return f"{field_subject} 최소 2자에서 최대 100자까지 입력할 수 있습니다."
+    return ""
 
 
 def _build_profile_form_data(user, request=None):
@@ -182,6 +204,28 @@ def _create_user(request):
         messages.error(request, "이름을 입력해 주세요.")
         return False, form_data
 
+    if not form_data["department"]:
+        messages.error(request, "부서를 입력해 주세요.")
+        return False, form_data
+
+    if not form_data["position"]:
+        messages.error(request, "직급을 입력해 주세요.")
+        return False, form_data
+
+    for field_name, field_label in (
+        ("name", "이름은"),
+        ("department", "부서는"),
+        ("position", "직급은"),
+    ):
+        error_message = _validate_user_text(form_data[field_name], field_label)
+        if error_message:
+            messages.error(request, error_message)
+            return False, form_data
+
+    if not USER_ID_PATTERN.fullmatch(form_data["user_id"]):
+        messages.error(request, "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.")
+        return False, form_data
+
     if form_data["use_yn"] not in {YesNoChoices.YES, YesNoChoices.NO}:
         messages.error(request, "활성 여부 값이 올바르지 않습니다.")
         return False, form_data
@@ -228,6 +272,85 @@ def _reset_user_password(request):
         update_session_auth_hash(request, target_user)
 
     messages.success(request, f"{target_user.name} 계정의 임시 비밀번호를 초기화했습니다.")
+
+
+def _get_target_user_from_post(request, error_action):
+    raw_user_sn = request.POST.get("user_sn", "").strip()
+    if not raw_user_sn.isdigit():
+        messages.error(request, f"{error_action}할 사용자를 찾을 수 없습니다.")
+        return None
+
+    target_user = User.objects.filter(sn=int(raw_user_sn)).first()
+    if target_user is None:
+        messages.error(request, f"{error_action}할 사용자를 찾을 수 없습니다.")
+        return None
+    return target_user
+
+
+@transaction.atomic
+def _update_user(request):
+    target_user = _get_target_user_from_post(request, "수정")
+    if target_user is None:
+        return
+
+    form_data = {
+        "name": request.POST.get("name", "").strip(),
+        "department": request.POST.get("department", "").strip(),
+        "position": request.POST.get("position", "").strip(),
+        "use_yn": request.POST.get("use_yn", YesNoChoices.YES),
+    }
+
+    if not form_data["name"]:
+        messages.error(request, "이름을 입력해 주세요.")
+        return
+    if not form_data["department"]:
+        messages.error(request, "부서를 입력해 주세요.")
+        return
+    if not form_data["position"]:
+        messages.error(request, "직급을 입력해 주세요.")
+        return
+
+    for field_name, field_label in (
+        ("name", "이름은"),
+        ("department", "부서는"),
+        ("position", "직급은"),
+    ):
+        error_message = _validate_user_text(form_data[field_name], field_label)
+        if error_message:
+            messages.error(request, error_message)
+            return
+
+    if form_data["use_yn"] not in {YesNoChoices.YES, YesNoChoices.NO}:
+        messages.error(request, "활성 여부 값이 올바르지 않습니다.")
+        return
+
+    target_user.name = form_data["name"]
+    target_user.department = form_data["department"]
+    target_user.position = form_data["position"]
+    target_user.use_yn = form_data["use_yn"]
+    target_user.updated_by = request.user
+    target_user.save(update_fields=["name", "department", "position", "use_yn", "updated_by"])
+    messages.success(request, "사용자 정보를 수정했습니다.")
+
+
+@transaction.atomic
+def _delete_user(request):
+    target_user = _get_target_user_from_post(request, "삭제")
+    if target_user is None:
+        return
+
+    if target_user.sn == request.user.sn:
+        messages.error(request, "현재 로그인한 사용자는 삭제할 수 없습니다.")
+        return
+
+    try:
+        target_user.delete()
+        messages.success(request, "사용자를 삭제했습니다.")
+    except ProtectedError:
+        target_user.use_yn = YesNoChoices.NO
+        target_user.updated_by = request.user
+        target_user.save(update_fields=["use_yn", "updated_by"])
+        messages.success(request, "연결된 데이터가 있어 사용자를 비활성화했습니다.")
 
 
 @login_required(login_url="home")
@@ -285,6 +408,12 @@ def user_list(request):
         elif action == "reset_user_password":
             _reset_user_password(request)
             return redirect("user_list")
+        elif action == "update_user":
+            _update_user(request)
+            return redirect("user_list")
+        elif action == "delete_user":
+            _delete_user(request)
+            return redirect("user_list")
 
     active = request.GET.get("active", "all")
     search_field = request.GET.get("field", "all")
@@ -339,6 +468,7 @@ def user_list(request):
         "title": "사용자 관리",
         "create_user_form": create_form,
         "open_user_create_modal": open_user_create_modal,
+        "suppress_page_messages": open_user_create_modal,
         "temp_password": TEMP_PASSWORD,
     }
     return render(request, "users/user_list.html", context)

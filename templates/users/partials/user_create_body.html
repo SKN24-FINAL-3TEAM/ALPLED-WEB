@@ -1,4 +1,4 @@
-<form method="post" data-user-create-form>
+<form method="post" novalidate data-user-create-form>
   {% csrf_token %}
   <input type="hidden" name="action" value="create_user">
 
@@ -10,6 +10,9 @@
         name="name"
         type="text"
         value="{{ create_user_form.name }}"
+        required
+        minlength="2"
+        maxlength="100"
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="이름을 입력해주세요">
     </div>
@@ -21,6 +24,11 @@
         name="user_id"
         type="text"
         value="{{ create_user_form.user_id }}"
+        required
+        minlength="7"
+        maxlength="10"
+        pattern="[A-Za-z0-9]{7,10}"
+        title="사원번호는 영문자와 숫자 조합으로 7자 이상 10자 이하로 입력해 주세요."
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="사원번호를 입력해주세요">
     </div>
@@ -32,6 +40,9 @@
         name="department"
         type="text"
         value="{{ create_user_form.department }}"
+        required
+        minlength="2"
+        maxlength="100"
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="부서를 입력해주세요">
     </div>
@@ -43,6 +54,9 @@
         name="position"
         type="text"
         value="{{ create_user_form.position }}"
+        required
+        minlength="2"
+        maxlength="100"
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="직급을 입력해주세요">
     </div>
@@ -66,7 +80,14 @@
     </div>
   </div>
 
-  <div class="mt-8 flex justify-end">
+  <div class="mt-8 flex items-center justify-end gap-4">
+    {% if open_user_create_modal and messages %}
+      <div class="min-w-0 flex-1 space-y-3" data-user-create-errors>
+        {% for message in messages %}
+          {% include "components/alert.html" with message=message %}
+        {% endfor %}
+      </div>
+    {% endif %}
     <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
       사용자 추가
     </button>

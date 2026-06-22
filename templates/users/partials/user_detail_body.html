@@ -6,17 +6,17 @@
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">이름</label>
-    <input id="user-detail-name" type="text" value="{{ selected_user.name }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
+    <input id="user-detail-name" form="user-detail-update-form" name="name" type="text" value="{{ selected_user.name }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">부서</label>
-    <input id="user-detail-department" type="text" value="{{ selected_user.department|default:'' }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
+    <input id="user-detail-department" form="user-detail-update-form" name="department" type="text" value="{{ selected_user.department|default:'' }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">직급</label>
-    <input id="user-detail-position" type="text" value="{{ selected_user.position|default:'' }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
+    <input id="user-detail-position" form="user-detail-update-form" name="position" type="text" value="{{ selected_user.position|default:'' }}" class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
@@ -33,7 +33,7 @@
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">활성 여부</label>
-    <select id="user-detail-active" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
+    <select id="user-detail-active" form="user-detail-update-form" name="use_yn" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900">
       <option value="Y" {% if selected_user.use_yn == "Y" %}selected{% endif %}>사용</option>
       <option value="N" {% if selected_user.use_yn == "N" %}selected{% endif %}>비활성화</option>
     </select>
@@ -77,10 +77,20 @@
 </div>
 
 <div class="mt-8 flex items-center justify-end gap-3">
-  <button type="button" class="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700">
+  <form id="user-detail-delete-form" method="post" action="{% url 'user_list' %}" data-confirm-form data-confirm-title="사용자 삭제" data-confirm-message="선택한 사용자를 삭제하시겠습니까?" data-confirm-text="삭제" data-confirm-tone="danger">
+    {% csrf_token %}
+    <input id="user-detail-delete-sn" type="hidden" name="user_sn" value="{{ selected_user.sn }}">
+    <input type="hidden" name="action" value="delete_user">
+  </form>
+  <form id="user-detail-update-form" method="post" action="{% url 'user_list' %}" data-confirm-form data-confirm-title="사용자 수정" data-confirm-message="사용자 정보를 수정하시겠습니까?" data-confirm-text="수정">
+    {% csrf_token %}
+    <input id="user-detail-update-sn" type="hidden" name="user_sn" value="{{ selected_user.sn }}">
+    <input type="hidden" name="action" value="update_user">
+  </form>
+  <button type="submit" form="user-detail-delete-form" class="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700">
     사용자 삭제
   </button>
-  <button type="button" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+  <button type="submit" form="user-detail-update-form" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
     사용자 수정
   </button>
 </div>

@@ -88,11 +88,45 @@ class UserViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, "users/login.html")
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+
+    def test_authenticated_user_is_logged_out_when_login_page_is_loaded(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("login"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "users/login.html")
+        self.assertContains(response, reverse("logout"), html=False)
+        self.assertContains(response, "alpledAuthenticatedSession", html=False)
+
+        protected_response = self.client.get(reverse("user_list"))
+        self.assertEqual(protected_response.status_code, 302)
+        self.assertIn(reverse("home"), protected_response["Location"])
+
+    def test_authenticated_pages_are_not_stored_in_browser_history_cache(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("user_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response.headers.get("Cache-Control", ""))
+        self.assertContains(response, "alpledAuthenticatedSession", html=False)
 
     def test_admin_login_redirects_to_user_list(self):
         response = self.client.post(
             reverse("login"),
             {"user_id": "admin", "password": "abc1234"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("user_list"))
+
+    def test_admin_login_with_root_referer_redirects_to_user_list(self):
+        response = self.client.post(
+            reverse("home"),
+            {"user_id": "admin", "password": "abc1234"},
+            HTTP_REFERER="http://127.0.0.1:8000/",
         )
 
         self.assertEqual(response.status_code, 302)
@@ -137,6 +171,19 @@ class UserViewTests(TestCase):
         self.assertContains(response, "data-auto-notice", html=False)
         self.assertContains(response, "임시 비밀번호입니다. 비밀번호를 변경해 주세요.")
         self.assertNotContains(response, "alert(", html=False)
+
+    def test_temp_password_user_is_blocked_from_other_pages_until_password_change(self):
+        temp_user = self._create_temp_user()
+        self.client.force_login(temp_user)
+
+        response = self.client.get(reverse("user_list"), follow=True)
+
+        self.assertRedirects(response, reverse("user_profile"))
+        self.assertContains(response, "최초 비밀번호를 수정해주세요.")
+        self.assertEqual(
+            self.client.session[TEMP_PASSWORD_REDIRECT_SESSION_KEY],
+            reverse("user_list"),
+        )
 
     def test_profile_update_changes_name_department_and_position(self):
         self.client.force_login(self.admin)
@@ -199,6 +246,19 @@ class UserViewTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], self._doc_history_url())
 
+    def test_sidebar_console_label_depends_on_user_role(self):
+        self.client.force_login(self.admin)
+        admin_response = self.client.get(reverse("user_list"))
+
+        self.assertContains(admin_response, "Admin Console")
+        self.assertNotContains(admin_response, "User Console")
+
+        self.client.force_login(self.member)
+        member_response = self.client.get(self._doc_history_url())
+
+        self.assertContains(member_response, "User Console")
+        self.assertNotContains(member_response, "Admin Console")
+
     def test_create_user_inserts_requested_values(self):
         self.client.force_login(self.admin)
 
@@ -206,7 +266,7 @@ class UserViewTests(TestCase):
             reverse("user_list"),
             {
                 "action": "create_user",
-                "user_id": "EMP001",
+                "user_id": "EMP202401",
                 "name": "Hong",
                 "department": "Development",
                 "position": "Manager",
@@ -216,7 +276,7 @@ class UserViewTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
 
-        created_user = User.objects.get(user_id="EMP001")
+        created_user = User.objects.get(user_id="EMP202401")
         self.assertEqual(created_user.name, "Hong")
         self.assertEqual(created_user.department, "Development")
         self.assertEqual(created_user.position, "Manager")
@@ -225,6 +285,77 @@ class UserViewTests(TestCase):
         self.assertEqual(created_user.use_yn, YesNoChoices.NO)
         self.assertTrue(created_user.check_password(TEMP_PASSWORD))
 
+    def test_create_user_validates_registration_constraints(self):
+        self.client.force_login(self.admin)
+
+        invalid_cases = [
+            (
+                {"user_id": "EMP202402", "name": "H", "department": "Development", "position": "Manager"},
+                "이름은 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "EMP202403", "name": "Hong", "department": "D", "position": "Manager"},
+                "부서는 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "EMP202404", "name": "Hong", "department": "Development", "position": "M"},
+                "직급은 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "EMP-001", "name": "Hong", "department": "Development", "position": "Manager"},
+                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
+            ),
+        ]
+
+        for payload, message in invalid_cases:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    reverse("user_list"),
+                    {
+                        "action": "create_user",
+                        "use_yn": YesNoChoices.YES,
+                        **payload,
+                    },
+                    follow=True,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, message)
+                self.assertContains(response, 'data-open-user-create-modal="true"', html=False)
+                self.assertFalse(User.objects.filter(user_id=payload["user_id"]).exists())
+
+    def test_create_user_rejects_duplicate_user_id(self):
+        self.client.force_login(self.admin)
+        User.objects.create_user(
+            user_id="EMP202405",
+            password=TEMP_PASSWORD,
+            name="Already",
+            department="Development",
+            position="Manager",
+            sys_mngr_yn=YesNoChoices.NO,
+            tmpr_pswd_yn=YesNoChoices.YES,
+            use_yn=YesNoChoices.YES,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+
+        response = self.client.post(
+            reverse("user_list"),
+            {
+                "action": "create_user",
+                "user_id": "EMP202405",
+                "name": "Hong",
+                "department": "Development",
+                "position": "Manager",
+                "use_yn": YesNoChoices.YES,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "이미 존재하는 사원번호입니다.")
+        self.assertEqual(User.objects.filter(user_id="EMP202405").count(), 1)
+
     def test_user_list_renders_reset_password_button_in_detail_modal(self):
         self.client.force_login(self.admin)
 
@@ -232,7 +363,17 @@ class UserViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'name="action" value="reset_user_password"', html=False)
+        self.assertContains(response, 'name="action" value="update_user"', html=False)
+        self.assertContains(response, 'name="action" value="delete_user"', html=False)
         self.assertContains(response, "data-confirm-form", html=False)
+
+    def test_user_create_form_uses_server_styled_validation_messages(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("user_list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<form method=\"post\" novalidate data-user-create-form>", html=False)
 
     def test_reset_user_password_sets_temp_flag_and_default_password(self):
         self.client.force_login(self.admin)
@@ -251,7 +392,61 @@ class UserViewTests(TestCase):
         self.assertEqual(self.member.tmpr_pswd_yn, YesNoChoices.YES)
         self.assertTrue(self.member.check_password(TEMP_PASSWORD))
 
-    def test_resetting_own_password_keeps_admin_session_valid(self):
+    def test_update_user_changes_detail_values(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("user_list"),
+            {
+                "action": "update_user",
+                "user_sn": str(self.member.sn),
+                "name": "Updated Member",
+                "department": "QA",
+                "position": "Lead",
+                "use_yn": YesNoChoices.NO,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.name, "Updated Member")
+        self.assertEqual(self.member.department, "QA")
+        self.assertEqual(self.member.position, "Lead")
+        self.assertEqual(self.member.use_yn, YesNoChoices.NO)
+        self.assertEqual(self.member.updated_by, self.admin)
+
+    def test_delete_user_removes_user_when_not_protected(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("user_list"),
+            {
+                "action": "delete_user",
+                "user_sn": str(self.member.sn),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(User.objects.filter(sn=self.member.sn).exists())
+
+    def test_delete_current_user_is_blocked(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("user_list"),
+            {
+                "action": "delete_user",
+                "user_sn": str(self.admin.sn),
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "현재 로그인한 사용자는 삭제할 수 없습니다.")
+        self.assertTrue(User.objects.filter(sn=self.admin.sn).exists())
+
+    def test_resetting_own_password_keeps_session_and_requires_password_change(self):
         self.client.force_login(self.admin)
 
         response = self.client.post(
@@ -263,7 +458,9 @@ class UserViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.client.get(reverse("user_list")).status_code, 200)
+        blocked_response = self.client.get(reverse("user_list"))
+        self.assertEqual(blocked_response.status_code, 302)
+        self.assertEqual(blocked_response["Location"], reverse("user_profile"))
 
         self.admin.refresh_from_db()
         self.assertEqual(self.admin.tmpr_pswd_yn, YesNoChoices.YES)

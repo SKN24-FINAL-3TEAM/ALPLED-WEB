@@ -15,7 +15,7 @@
     <div class="flex items-end justify-between gap-4">
       <h1 class="text-2xl font-bold text-slate-900">{{ title }}</h1>
       <div class="flex items-center gap-3">
-        <a href="{% url 'project_list' %}?open_project_form=1&project_form_mode=create" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+        <a href="{% url 'project_list' %}?{% if preserved_querystring %}{{ preserved_querystring }}&amp;{% endif %}open_project_form=1&amp;project_form_mode=create" class="rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
           프로젝트 등록
         </a>
       </div>

@@ -1,7 +1,8 @@
 <form method="post" action="{% url 'project_list' %}" class="space-y-8" data-project-create-form data-project-form-root>
   {% csrf_token %}
-  <input type="hidden" name="action" value="{% if project_form_mode == 'edit' %}update_project{% else %}create_project{% endif %}">
+  <input type="hidden" name="action" value="{% if project_form_mode == 'edit' %}update_project{% else %}create_project{% endif %}" data-project-form-action>
   <input type="hidden" name="project_sn" value="{{ project_form_project_sn }}">
+  <input type="hidden" name="next" value="{% url 'project_list' %}?{{ preserved_querystring }}">
 
   {% if project_form_mode == "edit" %}
     <div class="grid gap-4 md:grid-cols-2">
@@ -89,7 +90,12 @@
     </div>
   </section>
 
-  <div class="flex justify-end">
+  <div class="flex justify-end gap-3">
+    {% if project_form_mode == "edit" %}
+      <button type="submit" formnovalidate class="rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700" data-project-delete-submit>
+        삭제
+      </button>
+    {% endif %}
     <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700" data-project-create-submit>
       {{ project_form_submit_label|default:"프로젝트 등록" }}
     </button>
