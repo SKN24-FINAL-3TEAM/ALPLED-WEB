@@ -1375,12 +1375,15 @@
       return;
     }
 
-    const managerIds = getProjectRoleInput("manager")?.value.trim() || "";
-    const memberIds = getProjectRoleInput("member")?.value.trim() || "";
-    if (!managerIds && !memberIds) {
-      showAppAlert("최소 1명의 사용자를 추가해야 합니다.", "warning");
-      event.preventDefault();
-      return;
+    const isReadonlyAssignments = projectForm.dataset.projectReadonlyAssignments === "true";
+    if (!isReadonlyAssignments) {
+      const managerIds = getProjectRoleInput("manager")?.value.trim() || "";
+      const memberIds = getProjectRoleInput("member")?.value.trim() || "";
+      if (!managerIds && !memberIds) {
+        showAppAlert("최소 1명의 사용자를 추가해야 합니다.", "warning");
+        event.preventDefault();
+        return;
+      }
     }
 
     event.preventDefault();

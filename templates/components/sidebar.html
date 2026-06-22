@@ -45,7 +45,9 @@
           </svg>
           <span>사용자 관리</span>
         </a>
+      {% endif %}
 
+      {% if can_manage_projects %}
         <a href="{% url 'project_list' %}" class="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium transition {% if active_menu == 'projects' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">
           <svg class="h-5 w-5" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path d="M3.5 6.5a2 2 0 0 1 2-2h2l1.8 1.8h7.2a2 2 0 0 1 2 2v6.2a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-8Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>

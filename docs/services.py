@@ -285,6 +285,15 @@ def get_previous_document_code(document_code):
     return None if index == 0 else sequence[index - 1]
 
 
+def get_document_codes_before(document_code):
+    sequence = get_document_code_sequence()
+    try:
+        index = sequence.index(document_code)
+    except ValueError:
+        return []
+    return sequence[:index]
+
+
 def get_actor(request):
     return get_request_user(request)
 
@@ -503,7 +512,14 @@ def has_active_generation_session(state):
 
 
 def can_access_initial_generation(project, user, state):
-    if project is None or user is None or not is_project_manager(project, user):
+    """Return whether the user can start or continue the sequential document generation flow.
+
+    Project managers and assigned project members can generate deliverables.
+    If a generation session is already active, project participants can continue it.
+    If all deliverable types already have confirmed versions, generation is blocked until the
+    user explicitly starts a regeneration flow.
+    """
+    if project is None or user is None or not is_project_participant(project, user):
         return False
     return has_active_generation_session(state) or not has_all_generated_document_types(project)
 
@@ -995,6 +1011,34 @@ def create_draft_document(project, document_code, actor, source_inputs):
     )
 
 
+def _parse_document_version_number(version):
+    text = str(version or "").strip().lower()
+    if not text or text == "0":
+        return None
+    if text.startswith("v"):
+        text = text[1:]
+    if "." in text:
+        text = text.split(".", 1)[0]
+    try:
+        number = int(text)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def get_next_document_version(project, document_code):
+    numbers = []
+    versions = Document.objects.filter(
+        project=project,
+        document_type_id=document_code,
+    ).exclude(version="0").values_list("version", flat=True)
+    for version in versions:
+        number = _parse_document_version_number(version)
+        if number is not None:
+            numbers.append(number)
+    return str((max(numbers) if numbers else 0) + 1)
+
+
 @transaction.atomic
 def confirm_document(document, actor):
     latest_detail = get_latest_detail(document)
@@ -1002,7 +1046,7 @@ def confirm_document(document, actor):
         project=document.project,
         document_code=document.document_type_id,
         actor=actor,
-        version="1",
+        version=get_next_document_version(document.project, document.document_type_id),
         modification_content="파일 확정",
         content_bytes=get_document_detail_bytes(latest_detail),
         locked_user=None,
@@ -1163,20 +1207,25 @@ def reject_request(approval, actor, reason):
 
 def hydrate_generation_state_from_existing_documents(project, state):
     """
-    브라우저 세션이 비어 있어도 DB에 이미 확정된 최초 산출물이 있으면
+    브라우저 세션이 비어 있어도 DB에 이미 확정된 산출물이 있으면
     순차 생성 진행 상태를 이어받습니다.
 
-    예) DOC_SRS, DOC_ITF 확정본이 있으면 다음 현재 단계는 DOC_ARCH가 됩니다.
-    이 함수는 샘플 데이터 테스트뿐 아니라 사용자가 세션을 잃었을 때도
-    앞 단계부터 다시 보이는 문제를 줄이기 위한 보정 로직입니다.
+    단, 재생성 모드(regeneration_from)가 있으면 선택한 산출물 이전까지만
+    확정 상태로 복구합니다. 예를 들어 DOC_ARCH 재생성이면 DOC_SRS, DOC_ITF만
+    완료 상태로 유지하고 DOC_ARCH부터 다시 생성 대기로 둡니다.
     """
     if project is None:
         return state
 
     confirmed = state.setdefault("confirmed_documents", {})
     draft_documents = state.setdefault("draft_documents", {})
+    sequence = get_document_code_sequence()
+    regeneration_from = state.get("regeneration_from")
+    hydration_sequence = sequence
+    if regeneration_from in sequence:
+        hydration_sequence = sequence[: sequence.index(regeneration_from)]
 
-    for code in get_document_code_sequence():
+    for code in hydration_sequence:
         if str(code) in confirmed:
             continue
         if str(code) in draft_documents:
@@ -1189,6 +1238,15 @@ def hydrate_generation_state_from_existing_documents(project, state):
 
     return state
 
+
+def begin_generation_regeneration(session, project, document_code):
+    target_code = resolve_document_code(document_code)
+    state = _build_empty_generation_state(project)
+    state["regeneration_mode"] = True
+    state["regeneration_from"] = target_code
+    hydrate_generation_state_from_existing_documents(project, state)
+    save_generation_state(session, state)
+    return state
 
 def get_generation_state(session, project):
     state = session.get(GENERATION_SESSION_KEY)
@@ -1203,6 +1261,7 @@ def get_generation_state(session, project):
     state.setdefault("draft_documents", {})
     state.setdefault("confirmed_documents", {})
     state.setdefault("itf_reference_files", [])
+    state.setdefault("regeneration_mode", False)
     return hydrate_generation_state_from_existing_documents(project, state)
 
 

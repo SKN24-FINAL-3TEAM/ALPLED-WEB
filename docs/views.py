@@ -41,6 +41,7 @@ from .services import (
     build_editor_config,
     build_generation_redirect_url,
     build_history_preview_api_url,
+    begin_generation_regeneration,
     can_request_approval,
     can_access_initial_generation,
     cancel_approval_request,
@@ -168,8 +169,8 @@ def _legacy_detail_error_message():
 
 def _build_history_help_text(can_generate):
     if can_generate:
-        return '"산출물 생성" 버튼을 눌러 최초 산출물 생성을 시작해 주세요.'
-    return "최초 생성은 프로젝트 관리자만 진행할 수 있으며, 확정본이 이미 있으면 다시 시작할 수 없습니다."
+        return '"산출물 생성" 버튼을 눌러 산출물 생성을 시작해 주세요.'
+    return "산출물 생성은 프로젝트에 할당된 구성원만 진행할 수 있으며, 확정본이 모두 있으면 재생성으로 다시 시작할 수 있습니다."
 
 
 def _build_generation_step_guide(document_code):
@@ -570,7 +571,7 @@ def document_generate(request):
     open_arch_form = request.GET.get("arch_form") == "1"
 
     if not can_access_initial_generation(current_project, actor, generation_state):
-        messages.error(request, "현재 프로젝트에서는 최초 산출물 생성을 진행할 수 없습니다.")
+        messages.error(request, "현재 프로젝트에 할당된 구성원만 산출물 생성을 진행할 수 있습니다.")
         return redirect(f"{reverse('doc_history_list')}?docs_cd={document_code}")
 
     if request.method == "GET" and request.GET.get("apply_selection") == "1":
@@ -585,9 +586,10 @@ def document_generate(request):
         current_code = get_current_generation_code(state)
 
         if action == "reset_generation":
-            clear_generation_state(request.session, current_project)
-            messages.success(request, "산출물 재생성을 시작할 수 있도록 진행 상태를 초기화했습니다.")
-            return redirect(build_generation_redirect_url(document_code=document_code, resume=False))
+            target_code = resolve_document_code(request.POST.get("docs_cd") or document_code or current_code)
+            begin_generation_regeneration(request.session, current_project, target_code)
+            messages.success(request, f"{get_document_label(target_code)} 재생성을 시작할 수 있도록 해당 단계부터 진행 상태를 초기화했습니다.")
+            return redirect(build_generation_redirect_url(document_code=target_code, resume=True))
 
         if action == "upload_itf_reference":
             if current_code != INTERFACE_REFERENCE_DOCUMENT_CODE:
