@@ -33,16 +33,6 @@
 
     <section class="flex items-center justify-center bg-white px-6 py-12 sm:px-10">
       <div class="w-full max-w-[23rem]">
-        {% if messages %}
-          <div class="mb-6 space-y-3">
-            {% for message in messages %}
-              <div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-                {{ message }}
-              </div>
-            {% endfor %}
-          </div>
-        {% endif %}
-
         <p class="text-xs font-bold uppercase tracking-[0.34em] text-blue-500">Welcome Back</p>
         <h2 class="mt-3 text-5xl font-black tracking-[-0.04em] text-slate-900">로그인</h2>
 
@@ -75,6 +65,15 @@
           <button type="submit" class="mt-6 w-full rounded-xl bg-[#173f67] px-5 py-4 text-base font-bold text-white shadow-sm transition hover:bg-[#123455]">
             로그인
           </button>
+          {% if messages %}
+            <div class="mt-4 space-y-3">
+              {% for message in messages %}
+                <div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+                  {{ message }}
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
         </form>
       </div>
     </section>
