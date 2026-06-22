@@ -170,6 +170,56 @@ def _build_history_help_text(can_generate):
     return "최초 생성은 프로젝트 관리자만 진행할 수 있으며, 확정본이 이미 있으면 다시 시작할 수 없습니다."
 
 
+def _build_generation_step_guide(document_code):
+    guides = {
+        "DOC_SRS": {
+            "title": "사용자 요구사항 정의서 생성",
+            "description": "사용자 요구사항 정의서 생성을 위해 제안요청서(RFP) 또는 회의록 문서를 선택해 주세요.",
+            "help": "선택한 문서를 기반으로 요구사항을 추출하고 사용자 요구사항 정의서 초안을 생성합니다.",
+        },
+        "DOC_ITF": {
+            "title": "사용자 인터페이스 설계서 생성",
+            "description": "사용자 인터페이스 설계서 생성을 위해 화면 UI 이미지 파일을 업로드해 주세요.",
+            "help": "업로드 가능한 형식은 PNG, JPG, JPEG이며 화면 단위로 여러 장을 등록할 수 있습니다.",
+        },
+        "DOC_ARCH": {
+            "title": "아키텍처 설계서 생성",
+            "description": "아키텍처 설계서 생성을 위해 시스템 구성요소 정보를 입력해 주세요.",
+            "help": "웹, 애플리케이션, AI Agent, DB, 스토리지, 외부 연계, 보안 장비 등 설계서에 표현할 구성요소를 등록할 수 있습니다.",
+        },
+        "DOC_ERD": {
+            "title": "ERD 생성",
+            "description": "ERD 생성을 위해 이전 단계에서 확정된 요구사항과 인터페이스·아키텍처 산출물을 기준으로 데이터 구조를 도출합니다.",
+            "help": "별도 입력값이 필요한 단계가 아니라, 앞 단계 확정 산출물을 기반으로 생성됩니다.",
+        },
+        "DOC_DB": {
+            "title": "DB 설계서 생성",
+            "description": "DB 설계서 생성을 위해 확정된 ERD와 요구사항을 기준으로 테이블, 컬럼, 제약조건 정보를 구성합니다.",
+            "help": "별도 구성요소 입력이 필요한 단계가 아니라, 앞 단계 확정 산출물을 기반으로 생성됩니다.",
+        },
+        "DOC_TS": {
+            "title": "테스트 시나리오 생성",
+            "description": "테스트 시나리오 생성을 위해 확정된 요구사항과 설계 산출물을 기준으로 테스트 항목을 구성합니다.",
+            "help": "기능 흐름, 예외 조건, 검증 기준을 포함한 테스트 시나리오 초안을 생성합니다.",
+        },
+    }
+    return guides.get(
+        document_code,
+        {
+            "title": f"{get_document_label(document_code)} 생성",
+            "description": f"{get_document_label(document_code)} 생성을 위한 입력 정보를 확인해 주세요.",
+            "help": "현재 산출물 생성 단계와 입력 조건을 확인한 뒤 생성을 진행할 수 있습니다.",
+        },
+    )
+
+
+def _find_generation_progress_row(progress_rows, document_code):
+    for row in progress_rows:
+        if row.get("code") == document_code:
+            return row
+    return None
+
+
 def _is_generation_resume_request(request):
     return request.GET.get("resume") == "1"
 
@@ -434,7 +484,7 @@ def _create_project_net_from_request(request, current_project, actor):
         messages.error(request, "현재 선택된 프로젝트가 없습니다.")
         return False, form_data
     if not form_data["name"]:
-        messages.error(request, "서버 망 이름을 입력해 주세요.")
+        messages.error(request, "구성요소명을 입력해 주세요.")
         return False, form_data
 
     expected_concurrent_users = None
@@ -458,7 +508,7 @@ def _create_project_net_from_request(request, current_project, actor):
         hardware_spec=form_data["hardware_spec"],
         remarks=form_data["remarks"],
     )
-    messages.success(request, "서버 정보를 추가했습니다.")
+    messages.success(request, "아키텍처 구성요소를 추가했습니다.")
     return True, _build_architecture_form_data()
 
 
@@ -561,19 +611,19 @@ def document_generate(request):
 
         if action == "delete_project_net":
             if current_code != ARCHITECTURE_DOCUMENT_CODE:
-                messages.error(request, "현재 단계에서는 서버 정보를 삭제할 수 없습니다.")
+                messages.error(request, "현재 단계에서는 아키텍처 구성요소를 삭제할 수 없습니다.")
                 return redirect(_build_generation_redirect(document_code, resume=True))
             if current_project is None:
                 messages.error(request, "현재 선택된 프로젝트가 없습니다.")
                 return redirect(_build_generation_redirect(document_code, resume=True))
             project_net = get_object_or_404(current_project.nets.all(), sn=request.POST.get("project_net_sn"))
             project_net.delete()
-            messages.success(request, "서버 정보를 삭제했습니다.")
+            messages.success(request, "아키텍처 구성요소를 삭제했습니다.")
             return redirect(_build_generation_redirect(document_code, resume=True))
 
         if action == "add_project_net":
             if current_code != ARCHITECTURE_DOCUMENT_CODE:
-                messages.error(request, "현재 단계에서는 서버 정보를 추가할 수 없습니다.")
+                messages.error(request, "현재 단계에서는 아키텍처 구성요소를 추가할 수 없습니다.")
                 return redirect(_build_generation_redirect(document_code, resume=True))
             created, architecture_form = _create_project_net_from_request(request, current_project, actor)
             open_arch_form = not created
@@ -660,19 +710,23 @@ def document_generate(request):
     available_files = get_project_files(current_project, allowed_types=("FILE_RFP", "FILE_MEETING"))
     available_files, file_type, search_field, query = apply_file_filters(request.GET, available_files)
     current_step_code = generation_context["current_code"]
+    selected_document_code = generation_context["requested_document_code"]
+    selected_is_current_step = bool(current_step_code and selected_document_code == current_step_code)
+    selected_step_guide = _build_generation_step_guide(selected_document_code)
+    selected_progress_row = _find_generation_progress_row(generation_context["progress_rows"], selected_document_code)
     itf_references = get_generation_itf_references(generation_context["state"])
     architecture_networks = get_project_nets(current_project)
     active_generation_job = None
     can_start_current_generation = False
     start_button_label = f"{generation_context['current_label']} 생성" if generation_context["current_label"] else "산출물 생성"
 
-    if current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE:
+    if selected_is_current_step and current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE:
         can_start_current_generation = bool(itf_references and current_step_code and not generation_context["current_draft"])
         start_button_label = "사용자 인터페이스 설계서 생성"
-    elif current_step_code == ARCHITECTURE_DOCUMENT_CODE:
+    elif selected_is_current_step and current_step_code == ARCHITECTURE_DOCUMENT_CODE:
         can_start_current_generation = bool(architecture_networks and current_step_code and not generation_context["current_draft"])
-        start_button_label = "아키텍처 설계서 초안 생성"
-    else:
+        start_button_label = "아키텍처 설계서 생성"
+    elif selected_is_current_step:
         can_start_current_generation = bool(
             generation_context["selected_files"] and current_step_code and not generation_context["current_draft"]
         )
@@ -693,7 +747,11 @@ def document_generate(request):
         "active_menu": "doc_history",
         "title": "산출물 생성",
         "current_project": current_project,
-        "selected_document_code": generation_context["requested_document_code"],
+        "selected_document_code": selected_document_code,
+        "selected_document_label": get_document_label(selected_document_code),
+        "selected_step_guide": selected_step_guide,
+        "selected_progress_row": selected_progress_row,
+        "selected_is_current_step": selected_is_current_step,
         "documents": build_project_file_rows(available_files),
         "file_type": file_type,
         "search_field": search_field,
@@ -716,9 +774,9 @@ def document_generate(request):
         "architecture_networks": architecture_networks,
         "architecture_form": architecture_form,
         "open_arch_form": open_arch_form,
-        "show_file_selector": current_step_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE},
-        "show_itf_upload": current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE,
-        "show_architecture_inputs": current_step_code == ARCHITECTURE_DOCUMENT_CODE,
+        "show_file_selector": selected_is_current_step and current_step_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE},
+        "show_itf_upload": selected_is_current_step and current_step_code == INTERFACE_REFERENCE_DOCUMENT_CODE,
+        "show_architecture_inputs": selected_is_current_step and current_step_code == ARCHITECTURE_DOCUMENT_CODE,
         "can_start_current_generation": can_start_current_generation,
         "start_button_label": start_button_label,
         "has_active_generation_session": has_active_generation_session(generation_context["state"]),

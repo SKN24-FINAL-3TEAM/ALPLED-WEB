@@ -42,12 +42,24 @@
   <section class="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
     <div class="mx-auto grid max-w-6xl gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
       <div class="space-y-4">
-        {% if show_file_selector %}
-          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-            사용자 요구사항 정의서 생성을 위해 제안요청서(RFP) 또는 회의록 문서가 필요합니다.<br>
-            문서 관리에서 업로드한 파일을 선택해 주세요.
-          </div>
+        <div class="max-w-3xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+          <p class="font-semibold text-slate-900">{{ selected_step_guide.title }}</p>
+          <p class="mt-1">{{ selected_step_guide.description }}</p>
+          <p class="mt-1 text-slate-500">{{ selected_step_guide.help }}</p>
+        </div>
 
+        {% if not selected_is_current_step %}
+          <div class="max-w-3xl rounded-[1.5rem] border border-slate-200 bg-white px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
+            {% if selected_progress_row.status == "confirmed" %}
+              {{ selected_document_label }}은 이미 생성 완료된 산출물입니다. 버전 이력 화면에서 확정본을 확인할 수 있습니다.
+            {% elif selected_progress_row.status == "review" %}
+              {{ selected_document_label }} 초안이 검토 중입니다. 해당 산출물 확인 화면에서 내용을 확인해 주세요.
+            {% else %}
+              현재 생성 단계는 <span class="font-semibold text-slate-900">{{ current_document_label }}</span>입니다.
+              {{ selected_document_label }} 입력 화면은 해당 산출물 생성 단계가 되었을 때 표시됩니다.
+            {% endif %}
+          </div>
+        {% elif show_file_selector %}
           <div class="pl-1">
             <button type="button" data-modal-target="docs-generate-files-modal" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
               {% if has_selected_files %}문서 다시 선택{% else %}문서 불러오기{% endif %}
@@ -70,10 +82,6 @@
             </div>
           {% endif %}
         {% elif show_itf_upload %}
-          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-            사용자 인터페이스 화면 UI 이미지를 업로드해 주세요.
-          </div>
-
           <form method="post" enctype="multipart/form-data" data-itf-upload-form>
             {% csrf_token %}
             <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
@@ -115,17 +123,13 @@
             </div>
           {% endif %}
         {% elif show_architecture_inputs %}
-          <div class="max-w-2xl rounded-[1.5rem] bg-slate-50 px-5 py-4 text-sm leading-7 text-slate-700 shadow-sm">
-            아키텍처 설계서에 필요한 서버 정보를 입력해 주세요.
-          </div>
-
           {% if not architecture_networks and not open_arch_form %}
             <div class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
               <div class="rounded-[1.5rem] border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
-                <p class="text-sm font-medium text-slate-700">서버 사양, 미들웨어, 방화벽, 망 분리 여부를 등록할 수 있습니다.</p>
-                <p class="mt-2 text-sm font-medium text-slate-700">필요한 개수만큼 추가해 주세요.</p>
+                <p class="text-sm font-medium text-slate-700">아키텍처 구성요소명, 목적, 기술 스택, 방화벽, 인증 방식, 인프라 사양을 등록할 수 있습니다.</p>
+                <p class="mt-2 text-sm font-medium text-slate-700">필요한 구성요소를 1개 이상 추가해야 아키텍처 설계서 생성이 가능합니다.</p>
                 <a href="?docs_cd={{ selected_document_code }}&resume=1&arch_form=1" class="mt-5 inline-flex rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-                  서버 정보 추가
+                  구성요소 추가
                 </a>
               </div>
             </div>
@@ -135,7 +139,8 @@
             <section class="max-w-5xl rounded-[1.75rem] border border-slate-200 bg-white p-6 shadow-sm">
               <div class="mb-5 flex items-center justify-between gap-3">
                 <div>
-                  <h2 class="text-xl font-semibold text-slate-900">아키텍처 설정</h2>
+                  <h2 class="text-xl font-semibold text-slate-900">아키텍처 구성요소 입력</h2>
+                  <p class="mt-1 text-sm text-slate-500">설계서에 포함할 시스템·서버·외부 연계·보안 구성요소 정보를 입력해 주세요.</p>
                 </div>
                 {% if architecture_networks %}
                   <a href="?docs_cd={{ selected_document_code }}&resume=1" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
@@ -150,47 +155,47 @@
 
                 <div class="grid gap-5 md:grid-cols-2">
                   <div class="space-y-2">
-                    <label for="project-net-name" class="block text-sm font-medium text-slate-900">서버 망 이름</label>
-                    <input id="project-net-name" name="name" type="text" value="{{ architecture_form.name }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="망 이름을 입력해 주세요">
+                    <label for="project-net-name" class="block text-sm font-medium text-slate-900">구성요소명 <span class="text-red-500">*</span></label>
+                    <input id="project-net-name" name="name" type="text" value="{{ architecture_form.name }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: 웹 UI, AI Agent 서버, DB 서버, S3">
                   </div>
                   <div class="space-y-2">
-                    <label for="project-net-purpose" class="block text-sm font-medium text-slate-900">서버 망 목적</label>
-                    <input id="project-net-purpose" name="purpose" type="text" value="{{ architecture_form.purpose }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="망 목적을 입력해 주세요">
+                    <label for="project-net-purpose" class="block text-sm font-medium text-slate-900">구성요소 목적</label>
+                    <input id="project-net-purpose" name="purpose" type="text" value="{{ architecture_form.purpose }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: 사용자 요청 처리, 산출물 생성, 메타데이터 저장">
                   </div>
                   <div class="space-y-2">
-                    <label for="project-net-middleware" class="block text-sm font-medium text-slate-900">미들웨어 기술 스택</label>
-                    <input id="project-net-middleware" name="middleware_stack" type="text" value="{{ architecture_form.middleware_stack }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="기술 스택을 입력해 주세요">
+                    <label for="project-net-middleware" class="block text-sm font-medium text-slate-900">기술 스택 / 미들웨어</label>
+                    <input id="project-net-middleware" name="middleware_stack" type="text" value="{{ architecture_form.middleware_stack }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: Django, FastAPI, LangGraph, MySQL, Qdrant">
                   </div>
                   <div class="space-y-2">
-                    <label for="project-net-firewall" class="block text-sm font-medium text-slate-900">방화벽 설정</label>
-                    <input id="project-net-firewall" name="firewall_settings" type="text" value="{{ architecture_form.firewall_settings }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="방화벽 설정을 입력해 주세요">
+                    <label for="project-net-firewall" class="block text-sm font-medium text-slate-900">방화벽 / 접근 정책</label>
+                    <input id="project-net-firewall" name="firewall_settings" type="text" value="{{ architecture_form.firewall_settings }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: 443 허용, DB 3306 내부망만 허용">
                   </div>
                   <div class="space-y-2">
-                    <label for="project-net-auth" class="block text-sm font-medium text-slate-900">보안 인증 방법</label>
-                    <input id="project-net-auth" name="auth_method" type="text" value="{{ architecture_form.auth_method }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="보안 인증 방법을 입력해 주세요">
+                    <label for="project-net-auth" class="block text-sm font-medium text-slate-900">인증 방식</label>
+                    <input id="project-net-auth" name="auth_method" type="text" value="{{ architecture_form.auth_method }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: Session, JWT, API Key, 서비스 계정">
                   </div>
                   <div class="space-y-2">
                     <label for="project-net-expected" class="block text-sm font-medium text-slate-900">예상 동시 접속자 수</label>
-                    <input id="project-net-expected" name="expected_concurrent_users" type="text" value="{{ architecture_form.expected_concurrent_users }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예상 동시 접속자 수를 입력해 주세요">
+                    <input id="project-net-expected" name="expected_concurrent_users" type="text" value="{{ architecture_form.expected_concurrent_users }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="숫자만 입력해 주세요. 예: 50">
                   </div>
                   <div class="space-y-2 md:col-span-2">
-                    <label for="project-net-hardware" class="block text-sm font-medium text-slate-900">서버 하드웨어 사양</label>
-                    <input id="project-net-hardware" name="hardware_spec" type="text" value="{{ architecture_form.hardware_spec }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="서버 하드웨어 사양을 입력해 주세요">
+                    <label for="project-net-hardware" class="block text-sm font-medium text-slate-900">하드웨어 / 인프라 사양</label>
+                    <input id="project-net-hardware" name="hardware_spec" type="text" value="{{ architecture_form.hardware_spec }}" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="예: 2vCPU / 4GB, RDS MySQL, S3, Auto Scaling">
                   </div>
                 </div>
 
                 <div class="space-y-2">
-                  <label for="project-net-remarks" class="block text-sm font-medium text-slate-900">추가 입력란</label>
-                  <textarea id="project-net-remarks" name="remarks" rows="5" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="추가 사항을 입력해 주세요">{{ architecture_form.remarks }}</textarea>
+                  <label for="project-net-remarks" class="block text-sm font-medium text-slate-900">추가 설명</label>
+                  <textarea id="project-net-remarks" name="remarks" rows="5" class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-400" placeholder="구성요소 간 연계, 배포 위치, 운영 조건, 예외 사항 등을 입력해 주세요.">{{ architecture_form.remarks }}</textarea>
                 </div>
 
                 <div class="flex flex-wrap items-center justify-between gap-4">
                   <label class="inline-flex items-center gap-3 text-sm font-medium text-slate-900">
-                    <span>망 분리 여부</span>
+                    <span>클라우드 사용 여부</span>
                     <input type="checkbox" name="cloud_yn" value="Y" class="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" {% if architecture_form.cloud_yn == "Y" %}checked{% endif %}>
                   </label>
                   <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-                    서버 망 추가
+                    구성요소 추가
                   </button>
                 </div>
               </form>
@@ -198,34 +203,74 @@
           {% endif %}
 
           {% if architecture_networks %}
-            <div class="pl-1">
+            <div class="flex flex-wrap items-center gap-3 pl-1">
               {% if not open_arch_form %}
                 <a href="?docs_cd={{ selected_document_code }}&resume=1&arch_form=1" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
-                  서버 정보 추가
+                  구성요소 추가
                 </a>
               {% endif %}
+              <p class="text-sm text-slate-500">등록된 구성요소 {{ architecture_networks|length }}건</p>
             </div>
 
-            <div class="max-w-4xl rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
-              <div class="rounded-[1.5rem] bg-slate-200/80 p-5">
-                <div class="space-y-3">
-                  {% for network in architecture_networks %}
-                    <div class="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-                      <div class="min-w-0">
-                        <p class="truncate text-sm font-medium text-slate-900">{{ network.name }}</p>
-                      </div>
-                      <form method="post" class="shrink-0">
-                        {% csrf_token %}
-                        <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
-                        <input type="hidden" name="action" value="delete_project_net">
-                        <input type="hidden" name="project_net_sn" value="{{ network.sn }}">
-                        <button type="submit" class="text-2xl leading-none text-slate-400 transition hover:text-slate-700" aria-label="서버 정보 제거">
-                          &times;
-                        </button>
-                      </form>
-                    </div>
-                  {% endfor %}
-                </div>
+            <div class="max-w-6xl overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm">
+              <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                  <thead class="bg-slate-50">
+                    <tr>
+                      <th scope="col" class="px-4 py-3 text-left font-semibold text-slate-700">구성요소명</th>
+                      <th scope="col" class="px-4 py-3 text-left font-semibold text-slate-700">목적</th>
+                      <th scope="col" class="px-4 py-3 text-left font-semibold text-slate-700">기술 스택</th>
+                      <th scope="col" class="px-4 py-3 text-left font-semibold text-slate-700">접근/인증</th>
+                      <th scope="col" class="px-4 py-3 text-center font-semibold text-slate-700">클라우드</th>
+                      <th scope="col" class="px-4 py-3 text-center font-semibold text-slate-700">처리</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100 bg-white">
+                    {% for network in architecture_networks %}
+                      <tr class="transition hover:bg-slate-50">
+                        <td class="max-w-[180px] px-4 py-4 align-top font-medium text-slate-900">
+                          <p class="truncate">{{ network.name }}</p>
+                          {% if network.expected_concurrent_users %}
+                            <p class="mt-1 text-xs font-normal text-slate-500">동시 {{ network.expected_concurrent_users }}명</p>
+                          {% endif %}
+                        </td>
+                        <td class="max-w-[220px] px-4 py-4 align-top text-slate-600">
+                          <p class="line-clamp-2">{{ network.purpose|default:"-" }}</p>
+                          {% if network.hardware_spec %}
+                            <p class="mt-1 text-xs text-slate-400">{{ network.hardware_spec }}</p>
+                          {% endif %}
+                        </td>
+                        <td class="max-w-[220px] px-4 py-4 align-top text-slate-600">
+                          <p class="line-clamp-2">{{ network.middleware_stack|default:"-" }}</p>
+                        </td>
+                        <td class="max-w-[240px] px-4 py-4 align-top text-slate-600">
+                          <p class="line-clamp-2">{{ network.firewall_settings|default:"-" }}</p>
+                          {% if network.auth_method %}
+                            <p class="mt-1 text-xs text-slate-400">인증: {{ network.auth_method }}</p>
+                          {% endif %}
+                        </td>
+                        <td class="px-4 py-4 text-center align-top">
+                          {% if network.cloud_yn == "Y" %}
+                            <span class="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800">Y</span>
+                          {% else %}
+                            <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">N</span>
+                          {% endif %}
+                        </td>
+                        <td class="px-4 py-4 text-center align-top">
+                          <form method="post" class="inline-flex">
+                            {% csrf_token %}
+                            <input type="hidden" name="docs_cd" value="{{ selected_document_code }}">
+                            <input type="hidden" name="action" value="delete_project_net">
+                            <input type="hidden" name="project_net_sn" value="{{ network.sn }}">
+                            <button type="submit" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50 hover:text-red-600" aria-label="구성요소 제거">
+                              삭제
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
               </div>
             </div>
           {% endif %}

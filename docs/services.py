@@ -612,8 +612,11 @@ def get_generation_reference_uris(state):
 
 #### fast api 요청 payload 만들기
 def build_generation_request_payload(project, state, document_code, *, update_mode="N", selected_files=None):
-    files = selected_files if selected_files is not None else get_generation_selected_files(project, state)
     image_list = get_generation_reference_uris(state) if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE else []
+    if document_code in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE}:
+        files = []
+    else:
+        files = selected_files if selected_files is not None else get_generation_selected_files(project, state)
     return {
         "project_sn": project.sn,
         "docs_cd": document_code,
@@ -1145,18 +1148,49 @@ def reject_request(approval, actor, reason):
     approval.save(update_fields=["approval_status", "rejection_reason", "updated_by"])
 
 
+def hydrate_generation_state_from_existing_documents(project, state):
+    """
+    브라우저 세션이 비어 있어도 DB에 이미 확정된 최초 산출물이 있으면
+    순차 생성 진행 상태를 이어받습니다.
+
+    예) DOC_SRS, DOC_ITF 확정본이 있으면 다음 현재 단계는 DOC_ARCH가 됩니다.
+    이 함수는 샘플 데이터 테스트뿐 아니라 사용자가 세션을 잃었을 때도
+    앞 단계부터 다시 보이는 문제를 줄이기 위한 보정 로직입니다.
+    """
+    if project is None:
+        return state
+
+    confirmed = state.setdefault("confirmed_documents", {})
+    draft_documents = state.setdefault("draft_documents", {})
+
+    for code in get_document_code_sequence():
+        if str(code) in confirmed:
+            continue
+        if str(code) in draft_documents:
+            break
+
+        confirmed_document = latest_confirmed_document(project, code)
+        if confirmed_document is None:
+            break
+        confirmed[str(code)] = confirmed_document.sn
+
+    return state
+
+
 def get_generation_state(session, project):
     state = session.get(GENERATION_SESSION_KEY)
     if not state:
-        return _build_empty_generation_state(project)
+        state = _build_empty_generation_state(project)
+        return hydrate_generation_state_from_existing_documents(project, state)
     if state.get("project_sn") != getattr(project, "sn", None):
         clear_generation_state(session)
-        return _build_empty_generation_state(project)
+        state = _build_empty_generation_state(project)
+        return hydrate_generation_state_from_existing_documents(project, state)
     state.setdefault("selected_file_ids", [])
     state.setdefault("draft_documents", {})
     state.setdefault("confirmed_documents", {})
     state.setdefault("itf_reference_files", [])
-    return state
+    return hydrate_generation_state_from_existing_documents(project, state)
 
 
 def save_generation_state(session, state):
@@ -1210,7 +1244,7 @@ def get_generation_prerequisite_error(project, state, document_code):
     if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE and not get_generation_itf_references(state):
         return "사용자 인터페이스 참고 이미지를 하나 이상 업로드해 주세요."
     if document_code == ARCHITECTURE_DOCUMENT_CODE and not get_project_nets(project):
-        return "서버 정보를 하나 이상 추가해 주세요."
+        return "아키텍처 구성요소를 하나 이상 추가해 주세요."
     if document_code not in {INTERFACE_REFERENCE_DOCUMENT_CODE, ARCHITECTURE_DOCUMENT_CODE} and not get_generation_selected_files(project, state):
         return "생성에 사용할 문서를 먼저 선택해 주세요."
     return None
@@ -1479,11 +1513,13 @@ def build_consistency_review(approval, *, previous_text="", updated_text=""):
     previous_text = previous_text or ""
     updated_text = updated_text or ""
 
-    diff = list(difflib.unified_diff(
-        previous_text.splitlines(),
-        updated_text.splitlines(),
-        lineterm="",
-    ))
+    diff = list(
+        difflib.unified_diff(
+            previous_text.splitlines(),
+            updated_text.splitlines(),
+            lineterm="",
+        )
+    )
     added_count = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
     removed_count = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
 
@@ -1553,6 +1589,7 @@ def build_approval_rows(queryset):
                 "version": approval.detail.document.version,
                 "requester_name": getattr(approval.created_by, "name", "-") or "-",
                 "status_name": approval.approval_status.name,
+                "status_code": approval.approval_status_id,
                 "request_content": approval.request_content,
                 "created_at": approval.created_at,
                 "detail_url": reverse("doc_approval_detail", args=[approval.approval_sn]),
