@@ -746,6 +746,19 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["redirect_url"], reverse("doc_detail", args=[draft.sn]))
 
+    def test_history_detail_hides_edit_and_approval_actions(self):
+        document = self._create_document(sn=42, version="1.0", document_type=self.srs_code)
+        self._create_detail(sn=42, document=document)
+
+        list_response = self.client.get(reverse("doc_history_list"), {"docs_cd": "all"})
+        self.assertContains(list_response, f'{reverse("doc_detail", args=[document.sn])}?from=history', html=False)
+
+        detail_response = self.client.get(reverse("doc_detail", args=[document.sn]), {"from": "history"})
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertNotContains(detail_response, reverse("doc_lock", args=[document.sn]), html=False)
+        self.assertNotContains(detail_response, reverse("doc_request_approval", args=[document.sn]), html=False)
+
     def test_history_list_exposes_active_job_context_for_running_generation(self):
         draft = self._create_document(sn=41, version="0", document_type=self.srs_code)
         draft.progress_status = self.progress_processing

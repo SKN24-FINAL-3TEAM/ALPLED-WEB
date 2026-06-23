@@ -841,6 +841,7 @@ def document_detail(request, document_sn):
 
     preview_detail_sn = request.GET.get("preview_detail")
     preview_detail = get_detail_by_sn(document, preview_detail_sn) if preview_detail_sn else None
+    is_history_view = request.GET.get("from") == "history"
     if preview_detail:
         try:
             preview_text = extract_text_from_docx(get_document_detail_bytes(preview_detail))
@@ -888,7 +889,7 @@ def document_detail(request, document_sn):
     )
     active_job = _get_document_active_job(request, current_project, document)
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
-    can_auto_apply = _can_show_auto_apply(document, actor, current_project, latest_detail)
+    can_auto_apply = (not is_history_view) and _can_show_auto_apply(document, actor, current_project, latest_detail)
 
     context = {
         "active_menu": "doc_history",
@@ -903,9 +904,10 @@ def document_detail(request, document_sn):
         "preview_text": preview_text,
         "revision_rows": revision_rows,
         "can_confirm": is_generation_draft and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
-        "can_edit": state == "view" and pending_approval is None,
+        "can_edit": (not is_history_view) and state == "view" and pending_approval is None,
         "can_cancel_approval": can_cancel_approval,
-        "can_request_approval": state == "view"
+        "can_request_approval": (not is_history_view)
+        and state == "view"
         and can_request_approval(
             document,
             actor,

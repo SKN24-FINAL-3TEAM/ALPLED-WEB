@@ -274,6 +274,7 @@
   </div>
 </div>
 
+{% if can_request_approval %}
 <div id="approval-request-modal" data-modal-root class="fixed inset-0 z-50 {% if open_approval_request_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
   <div class="relative w-full max-w-2xl">
     <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
@@ -300,4 +301,5 @@
     </div>
   </div>
 </div>
+{% endif %}
 {% endblock %}

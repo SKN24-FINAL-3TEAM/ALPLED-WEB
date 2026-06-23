@@ -21,6 +21,9 @@ def get_available_projects_for_user(user):
     if user is None:
         return Project.objects.none()
 
+    if getattr(user, "is_staff", False):
+        return Project.objects.filter(is_deleted=YesNoChoices.NO).order_by("name", "sn")
+
     return (
         Project.objects.filter(
             is_deleted=YesNoChoices.NO,

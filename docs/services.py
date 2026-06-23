@@ -315,10 +315,14 @@ def get_project_role(project, user):
 
 
 def is_project_manager(project, user):
+    if getattr(user, "is_staff", False):
+        return True
     return get_project_role(project, user) == "ROLE_MANAGER"
 
 
 def is_project_participant(project, user):
+    if getattr(user, "is_staff", False):
+        return True
     return get_project_role(project, user) in PROJECT_ROLE_CODES
 
 
@@ -1744,6 +1748,7 @@ def get_project_files(project, *, file_ids=None, allowed_types=None):
 def build_document_rows(queryset):
     rows = []
     for document in queryset:
+        detail_url = f'{reverse("doc_detail", args=[document.sn])}?from=history'
         rows.append(
             {
                 "sn": document.sn,
@@ -1752,7 +1757,7 @@ def build_document_rows(queryset):
                 "version": document.version or "-",
                 "modification_content": document.modification_content or "-",
                 "created_at": document.created_at,
-                "detail_url": reverse("doc_detail", args=[document.sn]),
+                "detail_url": detail_url,
                 "download_url": f'{reverse("doc_content", args=[document.sn])}?download=1',
                 "locked_by_name": getattr(document.possession_user, "name", ""),
                 "status_label": "확정본",

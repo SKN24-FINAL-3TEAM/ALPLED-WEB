@@ -3,6 +3,7 @@ from django.urls import reverse
 from urllib.parse import quote
 
 from common.models import Code, YesNoChoices
+from common.project_selection import get_available_projects_for_user
 from projects.models import Project, ProjectUserRole
 from users.models import User
 
@@ -72,6 +73,43 @@ class ProjectListAccessTests(TestCase):
         response = self.client.get(reverse("project_list"))
 
         self.assertEqual(response.status_code, 200)
+
+    def test_admin_available_projects_include_unassigned_projects(self):
+        assigned_project = Project.objects.create(
+            sn=1,
+            name="Assigned",
+            is_deleted=YesNoChoices.NO,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        unassigned_project = Project.objects.create(
+            sn=2,
+            name="Unassigned",
+            is_deleted=YesNoChoices.NO,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        deleted_project = Project.objects.create(
+            sn=3,
+            name="Deleted",
+            is_deleted=YesNoChoices.YES,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        ProjectUserRole.objects.create(
+            sn=1,
+            project=assigned_project,
+            user=self.admin,
+            role=self.role_manager,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+
+        projects = list(get_available_projects_for_user(self.admin))
+
+        self.assertIn(assigned_project, projects)
+        self.assertIn(unassigned_project, projects)
+        self.assertNotIn(deleted_project, projects)
 
     def test_admin_can_open_project_edit_modal_with_prefilled_data(self):
         project = Project.objects.create(
