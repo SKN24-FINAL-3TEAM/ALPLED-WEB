@@ -18,6 +18,7 @@ from .services import (
     extract_text_from_docx,
     get_document_detail_bytes,
     get_generation_state,
+    get_onlyoffice_document_server_url,
     start_initial_generation_job,
 )
 
@@ -933,6 +934,42 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["type"], "embedded")
         self.assertEqual(payload["editorConfig"]["mode"], "view")
         self.assertFalse(payload["document"]["permissions"]["edit"])
+
+    def test_document_detail_uses_relative_onlyoffice_url_for_browser(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        with patch(
+            "docs.views.settings.ONLYOFFICE_DOCUMENT_SERVER_URL",
+            "http://43.203.176.226:8888/web-apps/apps/api/documents/api.js",
+        ):
+            response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-document-server-url="/onlyoffice"', html=False)
+
+    def test_editor_config_uses_request_host_instead_of_internal_public_base_url(self):
+        document = self._create_document(sn=1, version="1.0", user=None)
+        self._create_detail(sn=1, document=document, content=b"seed")
+
+        with patch(
+            "docs.services.settings.DJANGO_PUBLIC_BASE_URL",
+            "http://host.docker.internal:8000",
+        ):
+            response = self.client.get(reverse("doc_editor_config", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["document"]["url"].startswith("http://testserver/docs/documents/"))
+        self.assertTrue(payload["editorConfig"]["callbackUrl"].startswith("http://testserver/docs/documents/"))
+
+    def test_onlyoffice_browser_url_normalizes_full_api_js_path(self):
+        with self.settings(
+            ONLYOFFICE_DOCUMENT_SERVER_URL="http://43.203.176.226:8888/web-apps/apps/api/documents/api.js"
+        ):
+            browser_url = get_onlyoffice_document_server_url(browser=True)
+
+        self.assertEqual(browser_url, "/onlyoffice")
 
     def test_approval_list_view_renders_with_db_driven_choices(self):
         document = self._create_document(sn=1, version="1.0", user=None)

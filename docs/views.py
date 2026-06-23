@@ -72,6 +72,7 @@ from .services import (
     get_generation_itf_references,
     get_generation_prerequisite_error,
     get_latest_detail,
+    get_onlyoffice_document_server_url,
     get_project_files,
     get_project_nets,
     get_running_document,
@@ -922,7 +923,7 @@ def document_detail(request, document_sn):
         "open_meeting_modal": request.GET.get("modal") == "meeting-files",
         "open_approval_request_modal": request.GET.get("modal") == "approval-request",
         "onlyoffice_enabled": bool(settings.ONLYOFFICE_DOCUMENT_SERVER_URL),
-        "onlyoffice_document_server_url": settings.ONLYOFFICE_DOCUMENT_SERVER_URL.rstrip("/"),
+        "onlyoffice_document_server_url": get_onlyoffice_document_server_url(request, browser=True),
         "download_url": f"{reverse('doc_content', args=[document.sn])}?download=1",
         "editor_config_url": reverse("doc_editor_config", args=[document.sn]),
         "selected_document_code": document.document_type_id,
@@ -993,6 +994,7 @@ def document_save(request, document_sn):
                 document,
                 latest_detail=latest_detail,
                 userdata=f"doc-save-{document.sn}-{actor.sn}",
+                request=request,
             )
         except Exception:
             message = "OnlyOffice 저장 요청을 전송하지 못했습니다. 환경 설정을 확인해 주세요."

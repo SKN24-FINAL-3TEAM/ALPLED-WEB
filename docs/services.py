@@ -6,7 +6,7 @@ import time
 import traceback
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -378,8 +378,48 @@ def download_remote_content(url):
         return response.read()
 
 
-def request_force_save(document, *, latest_detail=None, userdata=None):
-    document_server_url = settings.ONLYOFFICE_DOCUMENT_SERVER_URL.rstrip("/")
+def get_public_base_url(request=None):
+    if request is not None:
+        return request.build_absolute_uri("/").rstrip("/")
+    return getattr(settings, "DJANGO_PUBLIC_BASE_URL", "").rstrip("/")
+
+
+def normalize_onlyoffice_document_server_url(configured_url):
+    normalized_url = (configured_url or "").strip().rstrip("/")
+    api_suffix = "/web-apps/apps/api/documents/api.js"
+    if normalized_url.endswith(api_suffix):
+        normalized_url = normalized_url[: -len(api_suffix)]
+    return normalized_url.rstrip("/")
+
+
+def get_onlyoffice_document_server_url(request=None, *, browser=False):
+    configured_url = normalize_onlyoffice_document_server_url(
+        getattr(settings, "ONLYOFFICE_DOCUMENT_SERVER_URL", "")
+    )
+    if not configured_url:
+        return ""
+
+    if configured_url.startswith(("http://", "https://")):
+        if browser:
+            parsed_url = urlparse(configured_url)
+            browser_path = parsed_url.path.rstrip("/")
+            if browser_path:
+                return browser_path
+            return "/onlyoffice"
+        return configured_url
+
+    normalized_path = f"/{configured_url.lstrip('/')}".rstrip("/")
+    if browser:
+        return normalized_path or "/onlyoffice"
+
+    public_base_url = get_public_base_url(request)
+    if not public_base_url:
+        raise ValueError("OnlyOffice Document Server URL requires a public base URL.")
+    return urljoin(f"{public_base_url}/", normalized_path.lstrip("/")).rstrip("/")
+
+
+def request_force_save(document, *, latest_detail=None, userdata=None, request=None):
+    document_server_url = get_onlyoffice_document_server_url(request)
     if not document_server_url:
         raise ValueError("OnlyOffice Document Server URL is not configured.")
 
@@ -1526,7 +1566,7 @@ def wait_for_new_revision(document, *, baseline_detail_sn=None, timeout_seconds=
 
 def build_editor_config(request, document, actor, mode):
     latest_detail = get_latest_detail(document)
-    public_base_url = getattr(settings, "DJANGO_PUBLIC_BASE_URL", "").rstrip("/")
+    public_base_url = get_public_base_url(request)
     if not public_base_url:
         public_base_url = request.build_absolute_uri("/").rstrip("/")
 
