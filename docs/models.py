@@ -116,6 +116,67 @@ class DocumentApproval(CreatedAtMixin, CreatedByMixin, UpdatedAtMixin, UpdatedBy
         return self.approval_sn
 
 
+class GenerationJob(models.Model):
+    sn = models.AutoField(primary_key=True, db_column="job_sn")
+    job_id = models.CharField(max_length=36, unique=True, db_column="job_id")
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.DO_NOTHING,
+        db_column="prj_sn",
+        related_name="generation_jobs",
+        db_constraint=False,
+    )
+    document_type = models.ForeignKey(
+        "common.Code",
+        to_field="code",
+        on_delete=models.DO_NOTHING,
+        db_column="docs_cd",
+        related_name="generation_jobs_by_type",
+        db_constraint=False,
+    )
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.DO_NOTHING,
+        db_column="docs_sn",
+        related_name="generation_jobs",
+        db_constraint=False,
+        null=True,
+        blank=True,
+    )
+    job_status = models.ForeignKey(
+        "common.Code",
+        to_field="code",
+        on_delete=models.DO_NOTHING,
+        db_column="job_stts_cd",
+        related_name="generation_jobs_by_status",
+        db_constraint=False,
+        default="PRGRS_PENDING",
+    )
+    progress_rate = models.IntegerField(db_column="progress_rate", default=0)
+    request_payload = models.JSONField(db_column="request_json")
+    result_payload = models.JSONField(db_column="result_json", null=True, blank=True)
+    error_code = models.CharField(max_length=100, db_column="error_cd", null=True, blank=True)
+    error_message = models.TextField(db_column="error_msg", null=True, blank=True)
+    retry_count = models.IntegerField(db_column="retry_cnt", default=0)
+    max_retry_count = models.IntegerField(db_column="max_retry_cnt", default=1)
+    active_key = models.CharField(max_length=200, db_column="active_key", null=True, blank=True)
+    request_id = models.CharField(max_length=100, db_column="request_id", null=True, blank=True)
+    requested_at = models.DateTimeField(db_column="requested_dt")
+    started_at = models.DateTimeField(db_column="started_dt", null=True, blank=True)
+    completed_at = models.DateTimeField(db_column="completed_dt", null=True, blank=True)
+    heartbeat_at = models.DateTimeField(db_column="heartbeat_dt", null=True, blank=True)
+    updated_at = models.DateTimeField(db_column="updated_dt")
+
+    class Meta:
+        db_table = "tbl_generation_job"
+        managed = False
+        verbose_name = "generation job"
+        verbose_name_plural = "generation jobs"
+
+    def __str__(self) -> str:
+        return f"{self.job_id} / {self.job_status_id}"
+
+
 class ApprovalReviewJob(models.Model):
     sn = models.BigAutoField(primary_key=True, db_column="job_sn")
     job_id = models.CharField(max_length=36, unique=True, db_column="job_id")

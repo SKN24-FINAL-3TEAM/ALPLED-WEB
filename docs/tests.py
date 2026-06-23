@@ -1,11 +1,14 @@
 import shutil
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from common.models import Code, YesNoChoices
 from common.storage import build_s3_uri, save_bytes
@@ -13,7 +16,7 @@ from files.models import ProjectFile
 from projects.models import Project, ProjectNet, ProjectUserRole
 from users.models import User
 
-from .models import Document, DocumentApproval, DocumentDetail
+from .models import Document, DocumentApproval, DocumentDetail, GenerationJob
 from .services import (
     build_approval_review_view,
     build_generation_request_payload,
@@ -65,6 +68,45 @@ class ApprovalReviewJsonDiffTests(SimpleTestCase):
 
 
 class DocumentWorkflowViewTests(TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tbl_generation_job (
+                    job_sn integer PRIMARY KEY,
+                    job_id varchar(36) NOT NULL UNIQUE,
+                    prj_sn integer NOT NULL,
+                    docs_cd varchar(100) NOT NULL,
+                    docs_sn integer NULL,
+                    job_stts_cd varchar(100) NOT NULL DEFAULT 'PRGRS_PENDING',
+                    progress_rate integer NOT NULL DEFAULT 0,
+                    request_json text NOT NULL,
+                    result_json text NULL,
+                    error_cd varchar(100) NULL,
+                    error_msg text NULL,
+                    retry_cnt integer NOT NULL DEFAULT 0,
+                    max_retry_cnt integer NOT NULL DEFAULT 1,
+                    active_key varchar(200) NULL,
+                    request_id varchar(100) NULL,
+                    requested_dt datetime NOT NULL,
+                    started_dt datetime NULL,
+                    completed_dt datetime NULL,
+                    heartbeat_dt datetime NULL,
+                    updated_dt datetime NOT NULL
+                )
+                """
+            )
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DROP TABLE IF EXISTS tbl_generation_job")
+        finally:
+            super().tearDownClass()
+
     def setUp(self):
         self.user = User.objects.filter(user_id="admin").first()
         if self.user is None:
@@ -102,7 +144,7 @@ class DocumentWorkflowViewTests(TestCase):
             self.other_user.save(
                 update_fields=["password", "sys_mngr_yn", "use_yn", "created_by", "updated_by"]
             )
-        self.temp_dir = Path.cwd() / ".tmp-test-itf" / self._testMethodName
+        self.temp_dir = Path(tempfile.gettempdir()) / "alpled-web-docs-tests" / self._testMethodName
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.storage_override = self.settings(ALPLED_LOCAL_STORAGE_ROOT=self.temp_dir)
         self.storage_override.enable()
@@ -277,6 +319,43 @@ class DocumentWorkflowViewTests(TestCase):
             remarks=remarks,
             created_by=self.user,
             updated_by=self.user,
+        )
+
+    def _create_generation_job(
+        self,
+        sn=1,
+        *,
+        job_id=None,
+        document_type=None,
+        document=None,
+        job_status=None,
+        request_payload=None,
+        result_payload=None,
+        error_code=None,
+        error_message=None,
+        request_id="req-1",
+    ):
+        return GenerationJob.objects.create(
+            sn=sn,
+            job_id=job_id or f"job-{sn:04d}",
+            project=self.project,
+            document_type=document_type or self.srs_code,
+            document=document,
+            job_status=job_status or self.progress_pending,
+            progress_rate=0,
+            request_payload=request_payload or {"udt_yn": "N"},
+            result_payload=result_payload,
+            error_code=error_code,
+            error_message=error_message,
+            retry_count=0,
+            max_retry_count=1,
+            active_key=None,
+            request_id=request_id,
+            requested_at=timezone.now(),
+            started_at=timezone.now(),
+            completed_at=None,
+            heartbeat_at=None,
+            updated_at=timezone.now(),
         )
 
     def _set_generation_state(
@@ -467,10 +546,11 @@ class DocumentWorkflowViewTests(TestCase):
         project_file = self._create_project_file()
         self._set_generation_state(selected_file_ids=[project_file.sn])
         draft = self._create_document(sn=11, version="0", document_type=self.srs_code)
+        job = self._create_generation_job(sn=11, job_id="job-srs-started", document=draft, document_type=self.srs_code)
 
         with patch(
             "docs.views.start_initial_generation_job",
-            return_value={"status": "started", "document": draft, "message": "문서 생성을 요청했습니다."},
+            return_value={"status": "started", "job": job, "document": draft, "message": "문서 생성을 요청했습니다."},
         ) as start_job_mock:
             response = self.client.post(
                 reverse("doc_generate"),
@@ -482,7 +562,7 @@ class DocumentWorkflowViewTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "started")
         self.assertEqual(payload["docs_cd"], "DOC_SRS")
-        self.assertEqual(payload["tracking_document_sn"], draft.sn)
+        self.assertEqual(payload["job_id"], job.job_id)
         self.assertIn(reverse("doc_job_status"), payload["poll_url"])
         start_job_mock.assert_called_once()
 
@@ -693,9 +773,10 @@ class DocumentWorkflowViewTests(TestCase):
 
         self._create_project_net()
         draft = self._create_document(sn=21, version="0", document_type=self.arch_code)
+        job = self._create_generation_job(sn=21, job_id="job-arch-started", document=draft, document_type=self.arch_code)
         with patch(
             "docs.views.start_initial_generation_job",
-            return_value={"status": "started", "document": draft, "message": "문서 생성을 요청했습니다."},
+            return_value={"status": "started", "job": job, "document": draft, "message": "문서 생성을 요청했습니다."},
         ) as start_job_mock:
             success_response = self.client.post(
                 reverse("doc_generate"),
@@ -707,7 +788,7 @@ class DocumentWorkflowViewTests(TestCase):
         payload = success_response.json()
         self.assertEqual(payload["status"], "started")
         self.assertEqual(payload["docs_cd"], "DOC_ARCH")
-        self.assertEqual(payload["tracking_document_sn"], draft.sn)
+        self.assertEqual(payload["job_id"], job.job_id)
         start_job_mock.assert_called_once()
 
     def test_architecture_generation_payload_does_not_include_project_net_json(self):
@@ -741,10 +822,18 @@ class DocumentWorkflowViewTests(TestCase):
         meeting_file = self._create_project_file(sn=30, code=self.file_meeting_code, name="meeting.docx")
         document = self._create_document(sn=31, version="1.0", user=self.user)
         self._create_detail(sn=31, document=document)
+        job = self._create_generation_job(
+            sn=31,
+            job_id="job-auto-apply",
+            document=document,
+            document_type=self.srs_code,
+            job_status=self.progress_pending,
+            request_payload={"udt_yn": "Y"},
+        )
 
         with patch(
             "docs.views.start_auto_apply_job",
-            return_value={"status": "started", "document": document, "message": "회의 내용 자동 적용을 요청했습니다."},
+            return_value={"status": "started", "job": job, "document": document, "message": "회의 내용 자동 적용을 요청했습니다."},
         ) as start_job_mock:
             response = self.client.post(
                 reverse("doc_auto_apply", args=[document.sn]),
@@ -756,7 +845,7 @@ class DocumentWorkflowViewTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "started")
         self.assertEqual(payload["job_kind"], "auto_apply")
-        self.assertEqual(payload["tracking_document_sn"], document.sn)
+        self.assertEqual(payload["job_id"], job.job_id)
         self.assertIn(reverse("doc_job_status"), payload["poll_url"])
         start_job_mock.assert_called_once()
 
@@ -826,16 +915,20 @@ class DocumentWorkflowViewTests(TestCase):
 
     def test_document_job_status_returns_completed_redirect_url(self):
         draft = self._create_document(sn=40, version="0", document_type=self.srs_code)
-        draft.progress_status = self.progress_completed
-        draft.save(update_fields=["progress_status"])
-        self._set_generation_state(draft_documents={"DOC_SRS": draft.sn})
+        job = self._create_generation_job(
+            sn=40,
+            job_id="job-srs-completed",
+            document=draft,
+            document_type=self.srs_code,
+            job_status=self.progress_completed,
+        )
 
         response = self.client.get(
             reverse("doc_job_status"),
             {
                 "job_kind": "initial",
                 "docs_cd": "DOC_SRS",
-                "tracking_document_sn": draft.sn,
+                "job_id": job.job_id,
             },
             HTTP_X_REQUESTED_WITH="XMLHttpRequest",
         )
@@ -860,15 +953,57 @@ class DocumentWorkflowViewTests(TestCase):
 
     def test_history_list_exposes_active_job_context_for_running_generation(self):
         draft = self._create_document(sn=41, version="0", document_type=self.srs_code)
-        draft.progress_status = self.progress_processing
-        draft.save(update_fields=["progress_status"])
-        self._set_generation_state(draft_documents={"DOC_SRS": draft.sn})
+        job = self._create_generation_job(
+            sn=41,
+            job_id="job-srs-running",
+            document=draft,
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+        )
 
         response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_SRS"})
 
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(response.context["active_job"])
-        self.assertEqual(response.context["active_job"]["tracking_document_sn"], draft.sn)
+        self.assertEqual(response.context["active_job"]["job_id"], job.job_id)
+
+    def test_history_list_prepends_generation_job_row_when_only_job_exists(self):
+        self._create_generation_job(
+            sn=52,
+            job_id="job-only-running",
+            document=None,
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+        )
+
+        response = self.client.get(reverse("doc_history_list"), {"docs_cd": "DOC_SRS"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["documents"][0]["row_kind"], "job")
+        self.assertContains(response, "job_modal=waiting", html=False)
+
+    def test_document_detail_opens_generation_failed_modal(self):
+        document = self._create_document(sn=53, version="1.0", document_type=self.srs_code)
+        self._create_detail(sn=53, document=document)
+        job = self._create_generation_job(
+            sn=53,
+            job_id="job-failed-detail",
+            document=document,
+            document_type=self.srs_code,
+            job_status=self.progress_failed,
+            error_code="REQUIREMENT_GOLD_GENERATION_FAILED",
+            error_message="stack trace",
+        )
+
+        response = self.client.get(
+            reverse("doc_detail", args=[document.sn]),
+            {"modal": "generation-failed", "job_sn": job.sn},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["open_generation_failed_modal"])
+        self.assertContains(response, "REQUIREMENT_GOLD_GENERATION_FAILED")
+        self.assertContains(response, "stack trace")
 
     def test_document_save_releases_lock_and_adds_revision(self):
         document = self._create_document(sn=1, version="0", user=self.user)

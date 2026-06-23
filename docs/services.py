@@ -4,6 +4,7 @@ import os
 import time
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -23,7 +24,7 @@ from common.storage import build_s3_uri, delete_object, delete_object_at_uri, re
 from files.models import ProjectFile
 from projects.models import ProjectNet, ProjectUserRole
 
-from .models import ApprovalReviewJob, Document, DocumentApproval, DocumentDetail
+from .models import ApprovalReviewJob, Document, DocumentApproval, DocumentDetail, GenerationJob
 
 
 DOCUMENT_CODE_SEQUENCE = ("DOC_SRS", "DOC_ITF", "DOC_ARCH", "DOC_ERD", "DOC_DB", "DOC_TS")
@@ -47,6 +48,8 @@ TERMINAL_PROGRESS_CODES = (PROGRESS_COMPLETED, PROGRESS_FAILED)
 FASTAPI_GENERATE_TIMEOUT_SECONDS = 10
 FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS = 10
 WORKING_DOCUMENT_VERSIONS = ("0", "0.0")
+GENERATION_JOB_KIND_INITIAL = "initial"
+GENERATION_JOB_KIND_AUTO_APPLY = "auto_apply"
 
 
 def _truncate_log_value(value, *, limit=600):
@@ -147,6 +150,14 @@ def get_doc_job_poll_interval_seconds():
     except (TypeError, ValueError):
         return 10
     return interval if interval > 0 else 10
+
+
+def _safe_parse_positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _build_reference_uri(reference):
@@ -648,10 +659,11 @@ def _build_fastapi_generate_url():
 
 def request_fastapi_generate(payload):
     url = _build_fastapi_generate_url()
+    timeout_seconds = FASTAPI_GENERATE_TIMEOUT_SECONDS
     _debug_generation_log(
         "fastapi_request_prepare",
         url=url,
-        timeout_seconds=FASTAPI_GENERATE_TIMEOUT_SECONDS,
+        timeout_seconds=timeout_seconds,
         payload=_summarize_generation_payload(payload),
     )
     request = Request(
@@ -661,7 +673,7 @@ def request_fastapi_generate(payload):
         method="POST",
     )
     try:
-        with urlopen(request, timeout=FASTAPI_GENERATE_TIMEOUT_SECONDS) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             status_code = getattr(response, "status", None) or response.getcode()
             body = response.read().decode("utf-8") or "{}"
     except Exception as exc:
@@ -775,6 +787,130 @@ def build_auto_apply_request_payload(project, document_code, selected_files):
     }
 
 
+def get_generation_job_kind(job):
+    if job is None:
+        return GENERATION_JOB_KIND_INITIAL
+    request_payload = getattr(job, "request_payload", None) or {}
+    update_mode = str(request_payload.get("udt_yn", "N") or "N").upper()
+    if update_mode == "Y":
+        return GENERATION_JOB_KIND_AUTO_APPLY
+    return GENERATION_JOB_KIND_INITIAL
+
+
+def get_generation_job_label(job):
+    return get_document_label(getattr(job, "document_type_id", None))
+
+
+def parse_fastapi_generation_response(payload, *, fallback_document_code=None):
+    if not isinstance(payload, dict):
+        return {}
+    raw_job_id = payload.get("job_id")
+    job_id = str(raw_job_id).strip() if raw_job_id is not None else ""
+    if not job_id:
+        return {}
+    return {
+        "job_id": job_id,
+        "request_id": str(payload.get("request_id") or "").strip(),
+        "project_sn": _safe_parse_positive_int(payload.get("project_sn")),
+        "docs_cd": str(payload.get("docs_cd") or fallback_document_code or "").strip(),
+        "status": str(payload.get("status") or "").strip() or PROGRESS_PENDING,
+        "status_url": str(payload.get("status_url") or "").strip(),
+        "message": str(payload.get("message") or "").strip() or "Generation accepted.",
+    }
+
+
+def _generation_job_queryset(project, document_code=None):
+    queryset = GenerationJob.objects.select_related(
+        "project",
+        "document_type",
+        "document",
+        "job_status",
+    )
+    if project is not None:
+        queryset = queryset.filter(project=project)
+    if document_code:
+        queryset = queryset.filter(document_type_id=document_code)
+    return queryset
+
+
+def _matches_generation_job_kind(job, job_kind=None):
+    if not job_kind:
+        return True
+    return get_generation_job_kind(job) == job_kind
+
+
+def get_generation_job(project, *, job_sn=None, job_id=None):
+    queryset = _generation_job_queryset(project)
+    if job_sn is not None:
+        return queryset.filter(sn=job_sn).first()
+    if job_id:
+        return queryset.filter(job_id=str(job_id).strip()).first()
+    return None
+
+
+def find_generation_job(
+    project,
+    document_code,
+    *,
+    job_kind=None,
+    job_id=None,
+    tracking_document_sn=None,
+    status_codes=None,
+):
+    queryset = _generation_job_queryset(project, document_code)
+    if status_codes:
+        queryset = queryset.filter(job_status_id__in=status_codes)
+    if job_id:
+        return queryset.filter(job_id=str(job_id).strip()).first()
+    if tracking_document_sn:
+        tracked_job = queryset.filter(document_id=tracking_document_sn).order_by("-requested_at", "-sn").first()
+        if tracked_job is not None and _matches_generation_job_kind(tracked_job, job_kind):
+            return tracked_job
+    for job in queryset.order_by("-requested_at", "-sn"):
+        if _matches_generation_job_kind(job, job_kind):
+            return job
+    return None
+
+
+def get_running_generation_job(project, document_code, *, job_kind=None, tracking_document_sn=None):
+    return find_generation_job(
+        project,
+        document_code,
+        job_kind=job_kind,
+        tracking_document_sn=tracking_document_sn,
+        status_codes=RUNNING_PROGRESS_CODES,
+    )
+
+
+def get_latest_generation_job(project, document_code, *, job_kind=None):
+    return find_generation_job(project, document_code, job_kind=job_kind)
+
+
+def get_running_initial_job(project, document_code, *, tracking_document_sn=None):
+    return get_running_generation_job(
+        project,
+        document_code,
+        job_kind=GENERATION_JOB_KIND_INITIAL,
+        tracking_document_sn=tracking_document_sn,
+    )
+
+
+def get_running_auto_apply_job(project, document_code, *, tracking_document_sn=None):
+    return get_running_generation_job(
+        project,
+        document_code,
+        job_kind=GENERATION_JOB_KIND_AUTO_APPLY,
+        tracking_document_sn=tracking_document_sn,
+    )
+
+
+def get_running_history_job(project, document_code):
+    job = get_running_generation_job(project, document_code)
+    if job is None:
+        return None, None
+    return get_generation_job_kind(job), job
+
+
 def _document_job_queryset(project, document_code, *, initial_only=False):
     queryset = Document.objects.filter(project=project, document_type_id=document_code).select_related(
         "project",
@@ -816,110 +952,6 @@ def clear_generation_draft_document(state, document_code):
     return state
 
 
-def find_document_job(
-    project,
-    document_code,
-    *,
-    tracking_document_sn=None,
-    initial_only=False,
-    progress_codes=None,
-):
-    if project is None:
-        return None
-    queryset = _document_job_queryset(project, document_code, initial_only=initial_only)
-    if progress_codes:
-        queryset = queryset.filter(progress_status_id__in=progress_codes)
-    if tracking_document_sn:
-        tracked_document = queryset.filter(sn=tracking_document_sn).first()
-        if tracked_document is not None:
-            return tracked_document
-    return queryset.order_by("-updated_at", "-created_at", "-sn").first()
-
-
-def wait_for_document_job(
-    project,
-    document_code,
-    *,
-    tracking_document_sn=None,
-    initial_only=False,
-    timeout_seconds=3,
-    interval_seconds=0.25,
-):
-    _debug_generation_log(
-        "wait_for_document_job_start",
-        project_sn=getattr(project, "sn", None),
-        document_code=document_code,
-        tracking_document_sn=tracking_document_sn,
-        initial_only=initial_only,
-        timeout_seconds=timeout_seconds,
-        interval_seconds=interval_seconds,
-    )
-    deadline = time.monotonic() + timeout_seconds
-    attempt = 0
-    while time.monotonic() < deadline:
-        attempt += 1
-        document = find_document_job(
-            project,
-            document_code,
-            tracking_document_sn=tracking_document_sn,
-            initial_only=initial_only,
-        )
-        if document is not None:
-            _debug_generation_log(
-                "wait_for_document_job_found",
-                attempt=attempt,
-                document_sn=document.sn,
-                progress_status_id=document.progress_status_id,
-                version=document.version,
-            )
-            return document
-        time.sleep(interval_seconds)
-    fallback_document = find_document_job(
-        project,
-        document_code,
-        tracking_document_sn=tracking_document_sn,
-        initial_only=initial_only,
-    )
-    _debug_generation_log(
-        "wait_for_document_job_end",
-        attempts=attempt,
-        found=bool(fallback_document),
-        document_sn=getattr(fallback_document, "sn", None),
-        progress_status_id=getattr(fallback_document, "progress_status_id", None),
-        version=getattr(fallback_document, "version", None),
-    )
-    return fallback_document
-
-
-def get_running_initial_document(project, document_code, *, tracking_document_sn=None):
-    return find_document_job(
-        project,
-        document_code,
-        tracking_document_sn=tracking_document_sn,
-        initial_only=True,
-        progress_codes=RUNNING_PROGRESS_CODES,
-    )
-
-
-def get_running_document(project, document_code, *, tracking_document_sn=None):
-    return find_document_job(
-        project,
-        document_code,
-        tracking_document_sn=tracking_document_sn,
-        progress_codes=RUNNING_PROGRESS_CODES,
-    )
-
-
-def get_running_history_job(project, document_code):
-    initial_document = get_running_initial_document(project, document_code)
-    if initial_document is not None:
-        return "initial", initial_document
-    running_document = get_running_document(project, document_code)
-    if running_document is not None:
-        return "auto_apply", running_document
-    return None, None
-
-
 def start_initial_generation_job(project, actor, state):
     document_code = get_current_generation_code(state)
     _debug_generation_log(
@@ -934,17 +966,24 @@ def start_initial_generation_job(project, actor, state):
     )
     if not document_code:
         _debug_generation_log("start_initial_generation_job_no_document_code")
-        return {"status": "error", "document": None, "message": "생성할 산출물 단계를 찾지 못했습니다."}
+        return {"status": "error", "job": None, "document": None, "message": "생성할 산출물 단계를 찾지 못했습니다."}
 
-    running_document = get_running_initial_document(project, document_code)
-    if running_document is not None:
+    running_job = get_running_initial_job(project, document_code)
+    if running_job is not None:
         _debug_generation_log(
             "start_initial_generation_job_already_running",
-            document_sn=running_document.sn,
-            progress_status_id=running_document.progress_status_id,
+            job_id=running_job.job_id,
+            job_status_id=running_job.job_status_id,
+            document_sn=running_job.document_id,
         )
-        set_generation_draft_document(state, running_document)
-        return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
+        if running_job.document is not None:
+            set_generation_draft_document(state, running_job.document)
+        return {
+            "status": "running",
+            "job": running_job,
+            "document": running_job.document,
+            "message": "문서를 생성 중입니다.",
+        }
 
     payload = build_generation_request_payload(project, state, document_code, update_mode="N")
     _debug_generation_log(
@@ -963,20 +1002,30 @@ def start_initial_generation_job(project, actor, state):
             error_type=type(exc).__name__,
             error=extract_fastapi_error_message(exc),
         )
-        return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
-    tracked_document = wait_for_document_job(project, document_code, initial_only=True)
-    if tracked_document is None:
-        _debug_generation_log("start_initial_generation_job_tracking_not_found")
-        return {"status": "error", "document": None, "message": "문서 생성 작업을 시작하지 못했습니다."}
+        return {"status": "error", "job": None, "document": None, "message": extract_fastapi_error_message(exc)}
 
-    set_generation_draft_document(state, tracked_document)
+    accepted_response = parse_fastapi_generation_response(fastapi_response, fallback_document_code=document_code)
+    if not accepted_response.get("job_id"):
+        _debug_generation_log("start_initial_generation_job_missing_job_id", response=_truncate_log_value(fastapi_response))
+        return {"status": "error", "job": None, "document": None, "message": "문서 생성 작업을 시작하지 못했습니다."}
+
+    tracked_job = get_generation_job(project, job_id=accepted_response["job_id"])
+    tracked_document = tracked_job.document if tracked_job is not None else None
+    if tracked_document is not None:
+        set_generation_draft_document(state, tracked_document)
     _debug_generation_log(
         "start_initial_generation_job_started",
-        tracked_document_sn=tracked_document.sn,
-        progress_status_id=tracked_document.progress_status_id,
-        version=tracked_document.version,
+        job_id=accepted_response["job_id"],
+        tracked_document_sn=getattr(tracked_document, "sn", None),
+        job_status_id=getattr(tracked_job, "job_status_id", None),
+        version=getattr(tracked_document, "version", None),
     )
-    return {"status": "started", "document": tracked_document, "message": "문서 생성을 요청했습니다."}
+    return {
+        "status": "started",
+        "job": tracked_job or SimpleNamespace(**accepted_response),
+        "document": tracked_document,
+        "message": accepted_response.get("message") or "문서 생성을 요청했습니다.",
+    }
 
 
 def start_auto_apply_job(project, document_code, selected_files):
@@ -986,14 +1035,20 @@ def start_auto_apply_job(project, document_code, selected_files):
         document_code=document_code,
         selected_file_ids=[project_file.sn for project_file in selected_files],
     )
-    running_document = get_running_document(project, document_code)
-    if running_document is not None:
+    running_job = get_running_auto_apply_job(project, document_code)
+    if running_job is not None:
         _debug_generation_log(
             "start_auto_apply_job_already_running",
-            document_sn=running_document.sn,
-            progress_status_id=running_document.progress_status_id,
+            job_id=running_job.job_id,
+            job_status_id=running_job.job_status_id,
+            document_sn=running_job.document_id,
         )
-        return {"status": "running", "document": running_document, "message": "문서를 생성 중입니다."}
+        return {
+            "status": "running",
+            "job": running_job,
+            "document": running_job.document,
+            "message": "문서를 생성 중입니다.",
+        }
 
     payload = build_auto_apply_request_payload(project, document_code, selected_files)
     _debug_generation_log(
@@ -1012,18 +1067,28 @@ def start_auto_apply_job(project, document_code, selected_files):
             error_type=type(exc).__name__,
             error=extract_fastapi_error_message(exc),
         )
-        return {"status": "error", "document": None, "message": extract_fastapi_error_message(exc)}
-    tracked_document = wait_for_document_job(project, document_code)
-    if tracked_document is None:
-        _debug_generation_log("start_auto_apply_job_tracking_not_found")
-        return {"status": "error", "document": None, "message": "회의 내용 자동 적용 작업을 시작하지 못했습니다."}
+        return {"status": "error", "job": None, "document": None, "message": extract_fastapi_error_message(exc)}
+
+    accepted_response = parse_fastapi_generation_response(fastapi_response, fallback_document_code=document_code)
+    if not accepted_response.get("job_id"):
+        _debug_generation_log("start_auto_apply_job_missing_job_id", response=_truncate_log_value(fastapi_response))
+        return {"status": "error", "job": None, "document": None, "message": "회의 내용 자동 적용 작업을 시작하지 못했습니다."}
+
+    tracked_job = get_generation_job(project, job_id=accepted_response["job_id"])
+    tracked_document = tracked_job.document if tracked_job is not None else None
     _debug_generation_log(
         "start_auto_apply_job_started",
-        tracked_document_sn=tracked_document.sn,
-        progress_status_id=tracked_document.progress_status_id,
-        version=tracked_document.version,
+        job_id=accepted_response["job_id"],
+        tracked_document_sn=getattr(tracked_document, "sn", None),
+        job_status_id=getattr(tracked_job, "job_status_id", None),
+        version=getattr(tracked_document, "version", None),
     )
-    return {"status": "started", "document": tracked_document, "message": "회의 내용 자동 적용을 요청했습니다."}
+    return {
+        "status": "started",
+        "job": tracked_job or SimpleNamespace(**accepted_response),
+        "document": tracked_document,
+        "message": accepted_response.get("message") or "회의 내용 자동 적용을 요청했습니다.",
+    }
 
 
 def build_generation_lines(project, document_code, inputs):

@@ -82,11 +82,15 @@
               {% for document in documents %}
                 <tr class="bg-white transition hover:bg-slate-50">
                   <td class="px-5 py-4 text-center">
-                    <a href="{{ document.detail_url }}" class="inline-block max-w-[160px] break-keep font-semibold text-slate-900 hover:text-blue-700">
-                      {{ document.type_name }}
-                    </a>
+                    {% if document.detail_url %}
+                      <a href="{{ document.detail_url }}" class="inline-block max-w-[160px] break-keep font-semibold text-slate-900 hover:text-blue-700">
+                        {{ document.type_name }}
+                      </a>
+                    {% else %}
+                      <span class="inline-block max-w-[160px] break-keep font-semibold text-slate-900">{{ document.type_name }}</span>
+                    {% endif %}
                   </td>
-                  <td class="px-5 py-4 text-center font-semibold text-slate-900 whitespace-nowrap">v{{ document.version }}</td>
+                  <td class="px-5 py-4 text-center font-semibold text-slate-900 whitespace-nowrap">{% if document.version == "-" %}-{% else %}v{{ document.version }}{% endif %}</td>
                   <td class="px-5 py-4 text-center">
                     <span class="block truncate" title="{{ document.creator_name }}">{{ document.creator_name }}</span>
                   </td>
@@ -95,18 +99,22 @@
                     <span class="line-clamp-2 break-keep">{{ document.modification_content }}</span>
                   </td>
                   <td class="px-5 py-4 text-center">
-                    <span class="inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    <span class="{{ document.status_badge_class }}">
                       {{ document.status_label }}
                     </span>
                   </td>
                   <td class="px-5 py-4 text-center">
                     <div class="flex items-center justify-center gap-2 whitespace-nowrap">
-                      <a href="{{ document.detail_url }}" class="inline-flex min-w-[72px] items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
-                        미리보기
-                      </a>
-                      <a href="{{ document.download_url }}" class="inline-flex min-w-[82px] items-center justify-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700">
-                        다운로드
-                      </a>
+                      {% if document.detail_url %}
+                        <a href="{{ document.detail_url }}" class="inline-flex min-w-[72px] items-center justify-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                          {{ document.action_label|default:"미리보기" }}
+                        </a>
+                      {% endif %}
+                      {% if document.download_url %}
+                        <a href="{{ document.download_url }}" class="inline-flex min-w-[82px] items-center justify-center rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-700">
+                          다운로드
+                        </a>
+                      {% endif %}
                     </div>
                   </td>
                 </tr>
@@ -127,5 +135,31 @@
       {% endif %}
     </div>
   </section>
+</div>
+
+<div id="generation-wait-modal" data-modal-root class="fixed inset-0 z-50 {% if open_generation_wait_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
+  <div class="relative w-full max-w-xl">
+    <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">생성 진행 안내</h3>
+          <p class="mt-1 text-sm text-slate-500">현재 선택한 산출물은 아직 생성 중입니다.</p>
+        </div>
+        <button type="button" data-modal-hide="generation-wait-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <span class="text-3xl leading-none">&times;</span>
+        </button>
+      </div>
+      <div class="space-y-4 px-6 py-6 text-sm text-slate-700">
+        <p>산출물 생성 중이니 잠시만 기다려 주세요. 완료 후 상세 화면에서 결과를 확인할 수 있습니다.</p>
+        {% if wait_modal_job %}
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <p class="font-semibold text-slate-900">{{ wait_modal_job.document_type.name }}</p>
+            <p class="mt-1 text-slate-600">작업 ID: {{ wait_modal_job.job_id }}</p>
+            <p class="mt-1 text-slate-600">상태: {{ wait_modal_job.job_status.name }}</p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}

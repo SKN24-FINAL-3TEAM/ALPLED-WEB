@@ -279,6 +279,39 @@
   </div>
 </div>
 
+<div id="generation-failed-modal" data-modal-root class="fixed inset-0 z-50 {% if open_generation_failed_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
+  <div class="relative w-full max-w-2xl">
+    <div class="overflow-hidden rounded-[1.5rem] bg-white shadow-lg">
+      <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">생성 실패 정보</h3>
+          <p class="mt-1 text-sm text-slate-500">산출물 생성 중 발생한 오류 내용을 확인해 주세요.</p>
+        </div>
+        <button type="button" data-modal-hide="generation-failed-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
+          <span class="text-3xl leading-none">&times;</span>
+        </button>
+      </div>
+      <div class="space-y-4 px-6 py-6 text-sm text-slate-700">
+        {% if failed_generation_job %}
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+            <p><span class="font-semibold text-slate-900">작업 ID</span> {{ failed_generation_job.job_id }}</p>
+            <p class="mt-1"><span class="font-semibold text-slate-900">요청 ID</span> {{ failed_generation_job.request_id|default:"-" }}</p>
+            <p class="mt-1"><span class="font-semibold text-slate-900">오류 코드</span> {{ failed_generation_job.error_code|default:"-" }}</p>
+          </div>
+          <div class="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+            <p class="mb-2 font-semibold text-rose-900">오류 로그</p>
+            <pre class="whitespace-pre-wrap break-all text-sm leading-6 text-rose-900">{{ failed_generation_job.error_message|default:"오류 메시지가 없습니다." }}</pre>
+          </div>
+        {% else %}
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-slate-600">
+            표시할 생성 실패 정보가 없습니다.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
 {% if can_request_approval %}
 <div id="approval-request-modal" data-modal-root class="fixed inset-0 z-50 {% if open_approval_request_modal %}flex{% else %}hidden{% endif %} items-center justify-center bg-slate-950/55 p-4">
   <div class="relative w-full max-w-2xl">

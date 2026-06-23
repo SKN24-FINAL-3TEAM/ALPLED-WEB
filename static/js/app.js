@@ -370,7 +370,8 @@
       }
 
       hideJobProgress();
-      showAppAlert(payload.message || "문서 작업을 완료하지 못했습니다.", payload.status === "failed" ? "error" : "warning");
+      const failureDetails = [payload.message, payload.error_cd, payload.error_msg].filter(Boolean).join("\n");
+      showAppAlert(failureDetails || "문서 작업을 완료하지 못했습니다.", payload.status === "failed" ? "error" : "warning");
     } catch (error) {
       hideJobProgress();
       showAppAlert(error.message || "작업 상태를 확인하지 못했습니다.", "error");

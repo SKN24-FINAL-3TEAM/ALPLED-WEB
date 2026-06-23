@@ -22,45 +22,49 @@ from files.services import (
 from .models import Document, DocumentApproval
 from .services import (
     ARCHITECTURE_DOCUMENT_CODE,
-    INTERFACE_REFERENCE_DOCUMENT_CODE,
-    FILE_INPUT_DOCUMENT_CODES,
     DERIVED_DOCUMENT_CODES,
+    FILE_INPUT_DOCUMENT_CODES,
+    GENERATION_JOB_KIND_AUTO_APPLY,
+    GENERATION_JOB_KIND_INITIAL,
+    INTERFACE_REFERENCE_DOCUMENT_CODE,
     PROGRESS_COMPLETED,
     PROGRESS_FAILED,
     PROGRESS_PENDING,
     PROGRESS_PROCESSING,
+    _debug_generation_log,
     acquire_document_lock,
     add_generation_itf_references,
     apply_approval_filters,
     approve_request,
+    begin_generation_regeneration,
+    build_approval_data_view,
     build_approval_queryset,
     build_approval_rows,
-    build_approval_data_view,
     build_approval_review_view,
     build_document_detail_url,
     build_document_rows,
     build_editor_config,
     build_generation_redirect_url,
     build_history_preview_api_url,
-    begin_generation_regeneration,
-    can_request_approval,
     can_access_initial_generation,
+    can_request_approval,
     cancel_approval_request,
     clear_generation_draft_document,
     clear_generation_state,
     confirm_document,
     create_project_net,
     create_approval_request,
-    _debug_generation_log,
     download_remote_content,
     extract_text_from_docx,
-    find_document_job,
+    find_generation_job,
     get_actor,
     get_approval_status_choices,
     get_current_generation_code,
     get_doc_job_poll_interval_seconds,
     get_detail_by_sn,
     get_document_detail_bytes,
+    get_generation_job,
+    get_generation_job_kind,
     get_document_label,
     get_document_history_queryset,
     get_document_title,
@@ -72,40 +76,42 @@ from .services import (
     get_generation_state,
     get_generation_itf_references,
     get_generation_prerequisite_error,
+    get_latest_generation_job,
     get_latest_detail,
     get_latest_approval_review_job,
     get_latest_pending_approval,
     get_onlyoffice_document_server_url,
     get_project_files,
     get_project_nets,
-    get_running_document,
+    get_running_auto_apply_job,
+    get_running_generation_job,
     get_running_history_job,
-    get_running_initial_document,
+    get_running_initial_job,
     has_document_version,
     has_active_generation_session,
     is_generation_complete,
-    is_working_document,
     is_latest_detail_for_document,
     is_latest_document_for_type,
     is_project_manager,
     is_project_participant,
+    is_working_document,
     mark_generation_confirmed,
     parse_callback_payload,
     reject_request,
+    remove_generation_itf_reference,
     release_document_lock,
     request_force_save,
+    request_fastapi_approval_review,
     resolve_document_code,
     restore_revision,
     save_generation_state,
     save_revision,
     set_generation_draft_document,
-    start_auto_apply_job,
-    start_initial_generation_job,
-    request_fastapi_approval_review,
     update_generation_selected_files,
     validate_document_content_token,
     wait_for_new_revision,
-    remove_generation_itf_reference,
+    start_auto_apply_job,
+    start_initial_generation_job,
 )
 
 
@@ -311,116 +317,173 @@ def _build_job_title(job_kind, document_code):
     return f"{label} 생성"
 
 
-def _build_job_status_url(job_kind, document_code, tracking_document_sn=None):
+def _build_history_list_url(document_code, **query):
+    query_items = []
+    if document_code:
+        query_items.append(("docs_cd", document_code))
+    for key, value in query.items():
+        if value not in (None, ""):
+            query_items.append((key, str(value)))
+    base_url = reverse("doc_history_list")
+    return f"{base_url}?{urlencode(query_items)}" if query_items else base_url
+
+
+def _build_job_status_url(job_kind, document_code, job_id=None, tracking_document_sn=None):
     query_items = [("job_kind", job_kind), ("docs_cd", document_code)]
+    if job_id:
+        query_items.append(("job_id", str(job_id)))
     if tracking_document_sn:
         query_items.append(("tracking_document_sn", str(tracking_document_sn)))
     return f"{reverse('doc_job_status')}?{urlencode(query_items)}"
 
 
-def _get_job_timing(document):
-    if document is None or getattr(document, "created_at", None) is None:
+def _get_job_timing(job):
+    if job is None:
         return "", 0
-    started_at = timezone.localtime(document.created_at)
-    elapsed_seconds = max(int((timezone.now() - document.created_at).total_seconds()), 0)
+    reference_dt = getattr(job, "started_at", None) or getattr(job, "requested_at", None)
+    if reference_dt is None:
+        return "", 0
+    started_at = timezone.localtime(reference_dt)
+    elapsed_seconds = max(int((timezone.now() - reference_dt).total_seconds()), 0)
     return started_at.isoformat(), elapsed_seconds
 
 
-def _build_job_response(job_kind, document_code, message, *, status, tracking_document_sn=None, redirect_url=""):
+def _build_job_response(
+    job_kind,
+    document_code,
+    message,
+    *,
+    status,
+    job_id="",
+    request_id="",
+    tracking_document_sn=None,
+    redirect_url="",
+    job_status_code="",
+    job_status_label="",
+    document_sn=None,
+    error_cd="",
+    error_msg="",
+):
     return {
         "status": status,
         "message": message,
         "title": _build_job_title(job_kind, document_code),
         "docs_cd": document_code,
         "job_kind": job_kind,
+        "job_id": job_id,
+        "request_id": request_id,
         "tracking_document_sn": tracking_document_sn,
-        "poll_url": _build_job_status_url(job_kind, document_code, tracking_document_sn),
+        "poll_url": _build_job_status_url(job_kind, document_code, job_id=job_id, tracking_document_sn=tracking_document_sn),
         "poll_interval_ms": get_doc_job_poll_interval_seconds() * 1000,
         "redirect_url": redirect_url,
         "started_at": "",
         "elapsed_seconds": 0,
+        "job_status_code": job_status_code,
+        "job_status_label": job_status_label,
+        "document_sn": document_sn,
+        "error_cd": error_cd,
+        "error_msg": error_msg,
     }
 
 
-def _build_document_job_response(job_kind, document_code, message, document, *, status, redirect_url=""):
-    started_at, elapsed_seconds = _get_job_timing(document)
+def _build_generation_job_response(job_kind, document_code, message, job, *, status, redirect_url=""):
+    started_at, elapsed_seconds = _get_job_timing(job)
+    tracking_document_sn = getattr(job, "document_id", None)
+    job_status_code = getattr(job, "job_status_id", "") or getattr(job, "status", "") or ""
+    job_status_label = getattr(getattr(job, "job_status", None), "name", "") or job_status_code
     payload = _build_job_response(
         job_kind,
         document_code,
         message,
         status=status,
-        tracking_document_sn=getattr(document, "sn", None),
+        job_id=getattr(job, "job_id", "") or "",
+        request_id=getattr(job, "request_id", "") or "",
+        tracking_document_sn=tracking_document_sn,
         redirect_url=redirect_url,
+        job_status_code=job_status_code,
+        job_status_label=job_status_label,
+        document_sn=tracking_document_sn,
+        error_cd=getattr(job, "error_code", "") or "",
+        error_msg=getattr(job, "error_message", "") or "",
     )
     payload["started_at"] = started_at
     payload["elapsed_seconds"] = elapsed_seconds
     return payload
 
 
-def _serialize_job_status(request, current_project, document_code, job_kind, tracking_document_sn=None):
-    if job_kind == "initial":
+def _serialize_job_status(request, current_project, document_code, job_kind, job_id=None, tracking_document_sn=None):
+    if job_kind == GENERATION_JOB_KIND_INITIAL:
         generation_state = get_generation_state(request.session, current_project)
-        document = find_document_job(
+        job = find_generation_job(
             current_project,
             document_code,
+            job_kind=job_kind,
+            job_id=job_id,
             tracking_document_sn=tracking_document_sn,
-            initial_only=True,
         )
-        if document is None:
+        if job is None:
             clear_generation_draft_document(generation_state, document_code)
             save_generation_state(request.session, generation_state)
             return _build_job_response(job_kind, document_code, "진행 중인 생성 작업이 없습니다.", status="idle")
-
-        if document.progress_status_id == PROGRESS_FAILED:
+        if job.job_status_id == PROGRESS_FAILED:
             clear_generation_draft_document(generation_state, document_code)
             save_generation_state(request.session, generation_state)
-            return _build_document_job_response(
+            return _build_generation_job_response(
                 job_kind,
                 document_code,
                 "문서 생성이 실패했습니다. 다시 시도해 주세요.",
-                document,
+                job,
                 status="failed",
             )
-
-        set_generation_draft_document(generation_state, document)
-        save_generation_state(request.session, generation_state)
+        if job.document is not None:
+            set_generation_draft_document(generation_state, job.document)
+            save_generation_state(request.session, generation_state)
     else:
-        document = find_document_job(
+        job = find_generation_job(
             current_project,
             document_code,
+            job_kind=job_kind,
+            job_id=job_id,
             tracking_document_sn=tracking_document_sn,
         )
-        if document is None:
+        if job is None:
             return _build_job_response(job_kind, document_code, "진행 중인 자동 적용 작업이 없습니다.", status="idle")
-        if document.progress_status_id == PROGRESS_FAILED:
-            return _build_document_job_response(
+        if job.job_status_id == PROGRESS_FAILED:
+            return _build_generation_job_response(
                 job_kind,
                 document_code,
                 "회의 내용 자동 적용이 실패했습니다. 다시 시도해 주세요.",
-                document,
+                job,
                 status="failed",
             )
 
-    if document.progress_status_id in {PROGRESS_PENDING, PROGRESS_PROCESSING}:
-        return _build_document_job_response(
+    if job.job_status_id in {PROGRESS_PENDING, PROGRESS_PROCESSING}:
+        return _build_generation_job_response(
             job_kind,
             document_code,
             "문서를 생성 중입니다.",
-            document,
+            job,
             status="running",
         )
 
-    if document.progress_status_id == PROGRESS_COMPLETED:
-        return _build_document_job_response(
+    if job.job_status_id == PROGRESS_COMPLETED:
+        redirect_url = reverse("doc_detail", args=[job.document_id]) if job.document_id else ""
+        return _build_generation_job_response(
             job_kind,
             document_code,
             "문서가 준비되었습니다.",
-            document,
+            job,
             status="completed",
-            redirect_url=reverse("doc_detail", args=[document.sn]),
+            redirect_url=redirect_url,
         )
 
-    return _build_job_response(job_kind, document_code, "작업 상태를 확인할 수 없습니다.", status="idle")
+    return _build_generation_job_response(
+        job_kind,
+        document_code,
+        "작업 상태를 확인할 수 없습니다.",
+        job,
+        status="idle",
+    )
 
 
 def _build_active_job_context(job_payload):
@@ -430,6 +493,7 @@ def _build_active_job_context(job_payload):
         "status": job_payload["status"],
         "message": job_payload["message"],
         "title": job_payload["title"],
+        "job_id": job_payload.get("job_id", ""),
         "poll_url": job_payload["poll_url"],
         "poll_interval_ms": job_payload["poll_interval_ms"],
         "tracking_document_sn": job_payload["tracking_document_sn"],
@@ -441,7 +505,7 @@ def _build_active_job_context(job_payload):
 
 
 def _get_document_active_job(request, current_project, document):
-    initial_job = get_running_initial_document(
+    initial_job = get_running_initial_job(
         current_project,
         document.document_type_id,
         tracking_document_sn=document.sn,
@@ -452,27 +516,122 @@ def _get_document_active_job(request, current_project, document):
                 request,
                 current_project,
                 document.document_type_id,
-                "initial",
+                GENERATION_JOB_KIND_INITIAL,
+                job_id=initial_job.job_id,
                 tracking_document_sn=document.sn,
             )
         )
 
-    running_document = get_running_document(
+    running_job = get_running_auto_apply_job(
         current_project,
         document.document_type_id,
         tracking_document_sn=document.sn,
     )
-    if running_document is not None:
+    if running_job is not None:
         return _build_active_job_context(
             _serialize_job_status(
                 request,
                 current_project,
                 document.document_type_id,
-                "auto_apply",
+                GENERATION_JOB_KIND_AUTO_APPLY,
+                job_id=running_job.job_id,
                 tracking_document_sn=document.sn,
             )
         )
     return None
+
+
+def _build_job_badge(job_status_code, job_status_label):
+    status_map = {
+        PROGRESS_PENDING: "inline-flex whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800",
+        PROGRESS_PROCESSING: "inline-flex whitespace-nowrap rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-800",
+        PROGRESS_FAILED: "inline-flex whitespace-nowrap rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-800",
+        PROGRESS_COMPLETED: "inline-flex whitespace-nowrap rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800",
+    }
+    return {
+        "status_label": job_status_label or "확정본",
+        "status_badge_class": status_map.get(
+            job_status_code,
+            "inline-flex whitespace-nowrap rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700",
+        ),
+    }
+
+
+def _decorate_history_document_row(document_row):
+    badge = _build_job_badge("", "확정본")
+    document_row["status_label"] = badge["status_label"]
+    document_row["status_badge_class"] = badge["status_badge_class"]
+    document_row["row_kind"] = "document"
+    document_row["action_label"] = "미리보기"
+    return document_row
+
+
+def _build_history_job_row(document_code, job):
+    document = getattr(job, "document", None)
+    job_status_label = getattr(getattr(job, "job_status", None), "name", "") or job.job_status_id
+    badge = _build_job_badge(job.job_status_id, job_status_label)
+    detail_url = ""
+    action_label = "상태 확인"
+    download_url = ""
+    if job.job_status_id in {PROGRESS_PENDING, PROGRESS_PROCESSING}:
+        detail_url = _build_history_list_url(document_code, job_modal="waiting", job_sn=job.sn)
+    elif job.job_status_id == PROGRESS_FAILED:
+        if job.document_id:
+            detail_url = f'{reverse("doc_detail", args=[job.document_id])}?{urlencode({"from": "history", "modal": "generation-failed", "job_sn": job.sn})}'
+            action_label = "오류 보기"
+        else:
+            detail_url = _build_history_list_url(document_code, job_modal="waiting", job_sn=job.sn)
+    elif job.document_id:
+        detail_url = f'{reverse("doc_detail", args=[job.document_id])}?{urlencode({"from": "history"})}'
+        action_label = "미리보기"
+        download_url = f'{reverse("doc_content", args=[job.document_id])}?download=1'
+
+    creator_name = getattr(getattr(document, "created_by", None), "name", "-") if document is not None else "-"
+    version = getattr(document, "version", "") if document is not None else ""
+    return {
+        "sn": f"job-{job.sn}",
+        "type_name": get_document_label(document_code),
+        "creator_name": creator_name or "-",
+        "version": version or "-",
+        "modification_content": getattr(job, "error_message", "") or getattr(job, "request_id", "") or getattr(job, "job_id", ""),
+        "created_at": getattr(job, "requested_at", None),
+        "detail_url": detail_url,
+        "download_url": download_url,
+        "status_label": badge["status_label"],
+        "status_badge_class": badge["status_badge_class"],
+        "row_kind": "job",
+        "action_label": action_label,
+        "job_sn": job.sn,
+        "job_id": job.job_id,
+        "job_status_code": job.job_status_id,
+    }
+
+
+def _build_history_rows(current_project, document_code, documents):
+    document_rows = [_decorate_history_document_row(row) for row in build_document_rows(documents)]
+    if not document_code:
+        return document_rows, None
+
+    latest_job = get_latest_generation_job(current_project, document_code)
+    if latest_job is None:
+        return document_rows, None
+
+    matching_document_row = next((row for row in document_rows if row.get("sn") == latest_job.document_id), None)
+    should_prepend_job_row = latest_job.job_status_id != PROGRESS_COMPLETED or matching_document_row is None
+    if should_prepend_job_row:
+        document_rows.insert(0, _build_history_job_row(document_code, latest_job))
+    return document_rows, latest_job
+
+
+def _resolve_generation_job_modal(project, job_sn, *, allowed_statuses=None):
+    if not job_sn:
+        return None
+    job = get_generation_job(project, job_sn=job_sn)
+    if job is None:
+        return None
+    if allowed_statuses and job.job_status_id not in allowed_statuses:
+        return None
+    return job
 
 
 def _can_show_auto_apply(document, actor, current_project, latest_detail):
@@ -534,21 +693,29 @@ def document_history_list(request):
 
     documents = get_document_history_queryset(current_project, document_code)
 
-    document_rows = build_document_rows(documents)
+    document_rows, latest_job = _build_history_rows(current_project, document_code, documents)
     can_generate = can_access_initial_generation(current_project, actor, generation_state)
     active_job = None
     if document_code:
-        active_job_kind, active_job_document = get_running_history_job(current_project, document_code)
-        if active_job_document is not None:
+        active_job_kind, active_job = get_running_history_job(current_project, document_code)
+        if active_job is not None:
             active_job = _build_active_job_context(
                 _serialize_job_status(
                     request,
                     current_project,
                     document_code,
                     active_job_kind,
-                    tracking_document_sn=active_job_document.sn,
+                    job_id=active_job.job_id,
+                    tracking_document_sn=active_job.document_id,
                 )
             )
+    wait_modal_job = None
+    if request.GET.get("job_modal") == "waiting":
+        wait_modal_job = _resolve_generation_job_modal(
+            current_project,
+            request.GET.get("job_sn"),
+            allowed_statuses={PROGRESS_PENDING, PROGRESS_PROCESSING},
+        )
     context = {
         "active_menu": "doc_history",
         "title": page_title,
@@ -561,6 +728,9 @@ def document_history_list(request):
         "can_generate": can_generate,
         "generation_help_text": _build_history_help_text(can_generate),
         "active_job": active_job,
+        "latest_job": latest_job,
+        "open_generation_wait_modal": wait_modal_job is not None,
+        "wait_modal_job": wait_modal_job,
     }
     return render(request, "docs/doc_history_list.html", context)
 
@@ -682,31 +852,33 @@ def document_generate(request):
                 "document_generate_start_current_job_result",
                 current_code=current_code,
                 job_status=job_result.get("status"),
+                job_id=getattr(job_result.get("job"), "job_id", None) or job_result.get("job", {}).get("job_id"),
                 document_sn=getattr(job_result.get("document"), "sn", None),
                 message=job_result.get("message"),
             )
             save_generation_state(request.session, state)
-            draft_document = job_result["document"]
-            if job_result["status"] == "error" or draft_document is None:
+            job_record = job_result.get("job")
+            draft_document = job_result.get("document")
+            if job_result["status"] == "error" or job_record is None:
                 if _is_ajax_request(request):
                     return JsonResponse({"message": job_result["message"]}, status=502)
-                messages.error(request, "생성할 산출물 단계를 찾지 못했습니다.")
+                messages.error(request, job_result["message"])
                 return redirect(build_generation_redirect_url(document_code=document_code, resume=True))
             if _is_ajax_request(request):
                 return JsonResponse(
-                    _build_document_job_response(
-                        "initial",
-                        draft_document.document_type_id,
+                    _build_generation_job_response(
+                        GENERATION_JOB_KIND_INITIAL,
+                        current_code,
                         job_result["message"],
-                        draft_document,
+                        job_record,
                         status=job_result["status"],
                     )
                 )
             if job_result["status"] == "started":
-                messages.success(request, f"{get_document_label(draft_document.document_type_id)} 생성을 요청했습니다.")
+                messages.success(request, f"{get_document_label(current_code)} 생성을 요청했습니다.")
             else:
                 messages.info(request, job_result["message"])
-            return redirect(_build_generation_redirect(draft_document.document_type_id, play=True, resume=True))
+            return redirect(_build_generation_redirect(current_code, play=True, resume=True))
 
         if action != "add_project_net":
             return redirect(_build_generation_redirect(document_code, resume=True))
@@ -752,13 +924,19 @@ def document_generate(request):
         can_start_current_generation = bool(current_step_code and not generation_context["current_draft"])
 
     if current_step_code:
+        running_job = get_running_initial_job(
+            current_project,
+            current_step_code,
+            tracking_document_sn=getattr(generation_context["current_draft"], "sn", None),
+        )
         tracking_document_sn = getattr(generation_context["current_draft"], "sn", None)
         active_generation_job = _build_active_job_context(
             _serialize_job_status(
                 request,
                 current_project,
                 current_step_code,
-                "initial",
+                GENERATION_JOB_KIND_INITIAL,
+                job_id=getattr(running_job, "job_id", None),
                 tracking_document_sn=tracking_document_sn,
             )
         )
@@ -815,8 +993,9 @@ def document_job_status(request):
 
     document_code = resolve_document_code(request.GET.get("docs_cd"))
     job_kind = (request.GET.get("job_kind") or "").strip()
+    job_id = (request.GET.get("job_id") or "").strip() or None
     tracking_document_sn = request.GET.get("tracking_document_sn") or None
-    if job_kind not in {"initial", "auto_apply"}:
+    if job_kind not in {GENERATION_JOB_KIND_INITIAL, GENERATION_JOB_KIND_AUTO_APPLY}:
         return JsonResponse({"message": "지원하지 않는 작업 유형입니다."}, status=400)
 
     return JsonResponse(
@@ -825,6 +1004,7 @@ def document_job_status(request):
             current_project,
             document_code,
             job_kind,
+            job_id=job_id,
             tracking_document_sn=tracking_document_sn,
         )
     )
@@ -897,6 +1077,15 @@ def document_detail(request, document_sn):
         else ""
     )
     active_job = _get_document_active_job(request, current_project, document)
+    failed_generation_job = None
+    if request.GET.get("modal") == "generation-failed":
+        failed_generation_job = _resolve_generation_job_modal(
+            current_project,
+            request.GET.get("job_sn"),
+            allowed_statuses={PROGRESS_FAILED},
+        )
+        if failed_generation_job is not None and failed_generation_job.document_id != document.sn:
+            failed_generation_job = None
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
     can_auto_apply = (not is_history_view) and _can_show_auto_apply(document, actor, current_project, latest_detail)
 
@@ -932,6 +1121,8 @@ def document_detail(request, document_sn):
         "open_history_modal": preview_detail is not None or request.GET.get("modal") == "history",
         "open_meeting_modal": request.GET.get("modal") == "meeting-files",
         "open_approval_request_modal": request.GET.get("modal") == "approval-request",
+        "open_generation_failed_modal": failed_generation_job is not None,
+        "failed_generation_job": failed_generation_job,
         "onlyoffice_enabled": bool(settings.ONLYOFFICE_DOCUMENT_SERVER_URL),
         "onlyoffice_document_server_url": get_onlyoffice_document_server_url(request, browser=True),
         "download_url": f"{reverse('doc_content', args=[document.sn])}?download=1",
@@ -1157,7 +1348,7 @@ def document_auto_apply(request, document_sn):
         return redirect(_document_detail_redirect(document, modal="meeting-files"))
 
     job_result = start_auto_apply_job(current_project, document.document_type_id, selected_files)
-    if job_result["status"] == "error" or job_result["document"] is None:
+    if job_result["status"] == "error" or job_result.get("job") is None:
         if _is_ajax_request(request):
             return JsonResponse({"message": job_result["message"]}, status=502)
         messages.error(request, job_result["message"])
@@ -1165,11 +1356,11 @@ def document_auto_apply(request, document_sn):
 
     if _is_ajax_request(request):
         return JsonResponse(
-            _build_document_job_response(
-                "auto_apply",
+            _build_generation_job_response(
+                GENERATION_JOB_KIND_AUTO_APPLY,
                 document.document_type_id,
                 job_result["message"],
-                job_result["document"],
+                job_result["job"],
                 status=job_result["status"],
             )
         )
