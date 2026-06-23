@@ -2,28 +2,11 @@ services:
   onlyoffice:
     image: onlyoffice/documentserver
     container_name: alpled-onlyoffice
+    restart: always
     ports:
       - "8888:80"
     environment:
       JWT_ENABLED: "true"
       JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-alpled-dev-secret}"
-
-
-# version: '3.8'
-
-# services:
-#   onlyoffice:
-#     image: onlyoffice/documentserver
-#     container_name: alpled-onlyoffice
-#     ports:
-#       - "8888:80"
-#     environment:
-#       JWT_ENABLED: "true"
-#       JWT_SECRET: "${ONLYOFFICE_JWT_SECRET:-alpled-dev-secret}"
-#       # Django와 OnlyOffice 간의 보안 토큰 전송 표준을 맞추기 위한 JWT 헤더 설정 추가
-#       JWT_HEADER: "Authorization"
-#       JWT_IN_BODY: "true"
-#     # 리눅스 우분투 환경에서 host.docker.internal 주소를 인식하게 만드는 핵심 게이트웨이 설정
-#     extra_hosts:
-#       - "host.docker.internal:host-gateway"
-#     restart: always
+      JWT_HEADER: "Authorization"
+      JWT_IN_BODY: "true"
