@@ -74,6 +74,7 @@ from .services import (
     get_generation_prerequisite_error,
     get_latest_detail,
     get_latest_approval_review_job,
+    get_latest_pending_approval,
     get_onlyoffice_document_server_url,
     get_project_files,
     get_project_nets,
@@ -882,7 +883,7 @@ def document_detail(request, document_sn):
         }
         for detail in revisions
     ]
-    can_view_revision_history = (not is_history_view) and is_working_document(document) and bool(revision_rows)
+    can_view_revision_history = True
 
     generation_state = get_generation_state(request.session, current_project)
     current_generation_code = get_current_generation_code(generation_state)
@@ -912,16 +913,14 @@ def document_detail(request, document_sn):
         "preview_text": preview_text,
         "revision_rows": revision_rows,
         "can_view_revision_history": can_view_revision_history,
-        "can_confirm": is_generation_draft and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
-        "can_edit": (not is_history_view) and state == "view" and pending_approval is None,
-        "can_cancel_approval": can_cancel_approval,
-        "can_request_approval": (not is_history_view)
+        "can_confirm": (not is_history_view)
         and state == "view"
-        and can_request_approval(
-            document,
-            actor,
-            pending_approval=pending_approval,
-        ),
+        and pending_approval is None
+        and is_generation_draft
+        and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
+        "can_edit": True,
+        "can_cancel_approval": can_cancel_approval,
+        "can_request_approval": True,
         "can_auto_apply": can_auto_apply,
         "locked_by_name": getattr(document.possession_user, "name", ""),
         "meeting_documents": build_project_file_rows(meeting_files),
@@ -954,10 +953,15 @@ def document_lock(request, document_sn):
     if request.method != "POST":
         return redirect(reverse("doc_detail", args=[document.sn]))
 
+    pending_approval = get_latest_pending_approval(document)
+    if pending_approval is not None:
+        messages.error(request, "승인 요청 처리 중인 산출물은 수정할 수 없습니다.")
+        return redirect(reverse("doc_detail", args=[document.sn]))
+
     if acquire_document_lock(document, actor):
         messages.success(request, "문서 수정 권한을 확보했습니다.")
     else:
-        messages.error(request, "다른 사용자가 이미 문서를 수정 중입니다.")
+        messages.error(request, "다른 사용자가 수정중입니다.")
     return redirect(build_document_detail_url(document, mode="edit"))
 
 
@@ -1186,12 +1190,23 @@ def document_request_approval(request, document_sn):
     if request.method != "POST":
         return redirect(reverse("doc_detail", args=[document.sn]))
     _, pending_approval = get_document_view_state(document, actor, preferred_mode="view")
+
+    if document.possession_user_id and document.possession_user_id != actor.sn:
+        messages.error(request, "다른 사용자가 수정중입니다. 승인요청은 수정 후 저장한 뒤 가능합니다.")
+        return redirect(reverse("doc_detail", args=[document.sn]))
+    if document.possession_user_id == actor.sn:
+        messages.error(request, "승인요청은 수정 후 저장한 뒤 가능합니다.")
+        return redirect(build_document_detail_url(document, mode="edit"))
+
     if not can_request_approval(
         document,
         actor,
         pending_approval=pending_approval,
     ):
-        messages.error(request, "현재 화면에서 승인 요청할 수 없습니다.")
+        if pending_approval is not None:
+            messages.error(request, "이미 승인 요청된 산출물입니다.")
+        else:
+            messages.error(request, "승인요청은 수정 후 저장한 뒤 가능합니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
 
     request_content = request.POST.get("request_content", "").strip()

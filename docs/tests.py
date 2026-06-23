@@ -845,7 +845,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["redirect_url"], reverse("doc_detail", args=[draft.sn]))
 
-    def test_history_detail_hides_edit_and_approval_actions(self):
+    def test_history_detail_shows_common_document_actions(self):
         document = self._create_document(sn=42, version="1.0", document_type=self.srs_code)
         self._create_detail(sn=42, document=document)
 
@@ -855,8 +855,8 @@ class DocumentWorkflowViewTests(TestCase):
         detail_response = self.client.get(reverse("doc_detail", args=[document.sn]), {"from": "history"})
 
         self.assertEqual(detail_response.status_code, 200)
-        self.assertNotContains(detail_response, reverse("doc_lock", args=[document.sn]), html=False)
-        self.assertNotContains(detail_response, reverse("doc_request_approval", args=[document.sn]), html=False)
+        self.assertContains(detail_response, reverse("doc_lock", args=[document.sn]), html=False)
+        self.assertContains(detail_response, reverse("doc_request_approval", args=[document.sn]), html=False)
 
     def test_history_list_exposes_active_job_context_for_running_generation(self):
         draft = self._create_document(sn=41, version="0", document_type=self.srs_code)
@@ -935,7 +935,7 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.context["document_state"], "readonly")
-        self.assertNotContains(detail_response, reverse("doc_lock", args=[document.sn]), html=False)
+        self.assertContains(detail_response, reverse("doc_lock", args=[document.sn]), html=False)
 
         save_response = self.client.post(
             reverse("doc_save", args=[document.sn]),
@@ -946,6 +946,9 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(save_response.status_code, 403)
         document.refresh_from_db()
         self.assertEqual(document.possession_user_id, self.user.sn)
+
+        lock_response = self.client.post(reverse("doc_lock", args=[document.sn]), follow=True)
+        self.assertContains(lock_response, "다른 사용자가 수정중입니다.", html=False)
 
     def test_document_save_waits_for_onlyoffice_revision_when_form_has_no_text(self):
         document = self._create_document(sn=1, version="1.0", user=self.user)
@@ -1174,14 +1177,14 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
 
-    def test_document_detail_hides_approval_request_button_in_edit_mode(self):
+    def test_document_detail_shows_approval_request_button_in_edit_mode(self):
         document = self._create_document(sn=1, version="1.0", user=self.user)
         self._create_detail(sn=1, document=document)
 
         response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
 
     def test_generation_draft_detail_shows_approval_request_button_after_save(self):
         document = self._create_document(sn=46, version="0", document_type=self.srs_code, user=None)
@@ -1207,6 +1210,59 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(response.context["can_request_approval"])
         self.assertContains(response, reverse("doc_lock", args=[document.sn]), html=False)
         self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
+
+    def test_locked_generation_draft_hides_save_and_edit_actions(self):
+        ProjectUserRole.objects.filter(project=self.project, user=self.other_user).update(role=self.role_manager)
+        document = self._create_document(sn=49, version="0", document_type=self.itf_code, user=self.user)
+        self._create_detail(sn=49, document=document)
+        self._set_generation_state(draft_documents={"DOC_ITF": document.sn}, confirmed_documents={"DOC_SRS": 1})
+        self.client.force_login(self.other_user)
+        session = self.client.session
+        session["current_project_sn"] = self.project.sn
+        session["docs_initial_generation"] = {
+            "project_sn": self.project.sn,
+            "selected_file_ids": [],
+            "draft_documents": {"DOC_ITF": document.sn},
+            "confirmed_documents": {"DOC_SRS": 1},
+            "itf_reference_files": [],
+        }
+        session.save()
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["document_state"], "readonly")
+        self.assertTrue(response.context["can_edit"])
+        self.assertFalse(response.context["can_confirm"])
+        self.assertContains(response, reverse("doc_lock", args=[document.sn]), html=False)
+        self.assertNotContains(response, reverse("doc_confirm", args=[document.sn]), html=False)
+
+        lock_response = self.client.post(reverse("doc_lock", args=[document.sn]), follow=True)
+        self.assertContains(lock_response, "다른 사용자가 수정중입니다.", html=False)
+
+        approval_response = self.client.post(
+            reverse("doc_request_approval", args=[document.sn]),
+            {"request_content": "please approve"},
+            follow=True,
+        )
+        self.assertContains(
+            approval_response,
+            "다른 사용자가 수정중입니다. 승인요청은 수정 후 저장한 뒤 가능합니다.",
+            html=False,
+        )
+
+    def test_generation_draft_save_action_is_rendered_below_document_viewer(self):
+        document = self._create_document(sn=50, version="0", document_type=self.srs_code, user=None)
+        self._create_detail(sn=50, document=document)
+        self._set_generation_state(draft_documents={"DOC_SRS": document.sn})
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        viewer_index = html.index("data-onlyoffice-root")
+        save_index = html.index(reverse("doc_confirm", args=[document.sn]))
+        self.assertGreater(save_index, viewer_index)
 
     def test_document_request_approval_allows_last_editor_from_detail_view(self):
         document = self._create_document(sn=1, version="1.0", user=None)

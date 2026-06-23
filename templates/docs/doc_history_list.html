@@ -66,13 +66,13 @@
 
       {% if current_project and has_documents %}
         <div class="overflow-x-auto">
-          <table class="min-w-[980px] w-full table-fixed text-left text-sm">
+          <table class="min-w-[1240px] w-full table-fixed text-left text-sm">
             <thead class="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-600">
               <tr>
                 <th class="w-[190px] px-5 py-3 text-center">산출물명</th>
                 <th class="w-[90px] px-5 py-3 text-center">버전</th>
-                <th class="w-[150px] px-5 py-3 text-center">확정자</th>
-                <th class="w-[190px] py-3 pl-10 pr-5 text-center">확정 일시</th>
+                <th class="w-[300px] px-5 py-3 text-center">확정자</th>
+                <th class="w-[220px] px-5 py-3 text-center">확정 일시</th>
                 <th class="px-5 py-3 text-center">수정 내용</th>
                 <th class="w-[110px] px-5 py-3 text-center">상태</th>
                 <th class="w-[180px] px-5 py-3 text-center">기능</th>
@@ -87,8 +87,10 @@
                     </a>
                   </td>
                   <td class="px-5 py-4 text-center font-semibold text-slate-900 whitespace-nowrap">v{{ document.version }}</td>
-                  <td class="px-5 py-4 text-center whitespace-nowrap">{{ document.creator_name }}</td>
-                  <td class="py-4 pl-10 pr-5 text-center whitespace-nowrap">{{ document.created_at|date:"Y-m-d H:i" }}</td>
+                  <td class="px-5 py-4 text-center">
+                    <span class="block truncate" title="{{ document.creator_name }}">{{ document.creator_name }}</span>
+                  </td>
+                  <td class="px-5 py-4 text-center whitespace-nowrap">{{ document.created_at|date:"Y-m-d H:i" }}</td>
                   <td class="px-5 py-4 text-center">
                     <span class="line-clamp-2 break-keep">{{ document.modification_content }}</span>
                   </td>

@@ -31,20 +31,20 @@
           </a>
         {% endif %}
 
-        {% if document_state == "edit" %}
-          {% if can_auto_apply %}
+        {% if can_auto_apply %}
           <button type="button" data-modal-target="meeting-files-modal" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
             회의 내용 자동 적용
           </button>
-          {% endif %}
-        {% elif document_state == "view" and can_edit %}
+        {% endif %}
+        {% if can_edit %}
           <form method="post" action="{% url 'doc_lock' document.sn %}">
             {% csrf_token %}
             <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
               수정하기
             </button>
           </form>
-        {% elif document_state == "waiting" and can_cancel_approval %}
+        {% endif %}
+        {% if can_cancel_approval %}
           <form method="post" action="{% url 'doc_cancel_approval' pending_approval.sn %}">
             {% csrf_token %}
             <button type="submit" class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100">
@@ -67,14 +67,6 @@
           파일 다운로드
         </a>
 
-        {% if can_confirm %}
-          <form method="post" action="{% url 'doc_confirm' document.sn %}">
-            {% csrf_token %}
-            <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700">
-              저장하기
-            </button>
-          </form>
-        {% endif %}
       </div>
     </div>
 
@@ -168,6 +160,17 @@
             <pre class="whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ latest_text|default:"문서 내용이 없습니다." }}</pre>
           </div>
         {% endif %}
+      </div>
+    {% endif %}
+
+    {% if can_confirm %}
+      <div class="mt-6 flex justify-end">
+        <form method="post" action="{% url 'doc_confirm' document.sn %}">
+          {% csrf_token %}
+          <button type="submit" class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-700">
+            저장하기
+          </button>
+        </form>
       </div>
     {% endif %}
   </section>
