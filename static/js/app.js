@@ -924,7 +924,10 @@
       const existing = document.querySelector(`script[src="${src}"]`);
       if (existing) {
         existing.addEventListener("load", () => resolve(), { once: true });
-        existing.addEventListener("error", () => reject(new Error("failed to load script")), { once: true });
+        existing.addEventListener("error", () => {
+          onlyOfficeScriptPromise = null;
+          reject(new Error("failed to load script"));
+        }, { once: true });
         if (existing.dataset.loaded === "true") {
           resolve();
         }
@@ -939,6 +942,7 @@
         resolve();
       }, { once: true });
       script.addEventListener("error", function () {
+        onlyOfficeScriptPromise = null;
         reject(new Error("failed to load script"));
       }, { once: true });
       document.head.appendChild(script);
@@ -947,15 +951,73 @@
     return onlyOfficeScriptPromise;
   }
 
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function renderOnlyOfficeError(root, heightPx, summary, detail) {
+    const detailHtml = detail
+      ? `<p class="mt-2 break-all text-xs text-slate-500">${escapeHtml(detail)}</p>`
+      : "";
+    root.innerHTML = `
+      <div class="flex h-full items-center justify-center px-6 text-center" style="height:${heightPx};">
+        <div class="max-w-2xl">
+          <p class="text-sm text-slate-600">${escapeHtml(summary)}</p>
+          ${detailHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  function describeOnlyOfficeInitError(error, context) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (message.startsWith("config request failed: ")) {
+      const status = message.split(":")[1]?.trim() || "unknown";
+      return {
+        summary: "OnlyOffice 설정을 불러오지 못했습니다.",
+        detail: `${context.configUrl} 응답을 확인해 주세요. (HTTP ${status})`,
+      };
+    }
+    if (message === "failed to load script") {
+      return {
+        summary: "OnlyOffice 스크립트를 불러오지 못했습니다.",
+        detail: `${context.scriptUrl} 경로와 nginx 프록시 설정을 확인해 주세요.`,
+      };
+    }
+    if (message === "DocsAPI unavailable") {
+      return {
+        summary: "OnlyOffice 스크립트는 응답했지만 편집기 API를 초기화하지 못했습니다.",
+        detail: `${context.scriptUrl} 응답이 정상 JavaScript인지, 404/HTML 응답이 아닌지 확인해 주세요.`,
+      };
+    }
+    return {
+      summary: "OnlyOffice 편집기 초기화에 실패했습니다.",
+      detail: message || "브라우저 콘솔과 네트워크 탭에서 실패 요청을 확인해 주세요.",
+    };
+  }
+
   async function initOnlyOfficeEditor(root) {
     const configUrl = root.dataset.configUrl;
     const documentServerUrl = root.dataset.documentServerUrl;
     if (!configUrl) return;
     const editorHeight = Math.max(720, Math.floor(window.innerHeight * 0.8));
     const editorHeightPx = `${editorHeight}px`;
+    const scriptUrl = `${documentServerUrl}/web-apps/apps/api/documents/api.js`;
     root.style.height = editorHeightPx;
 
     if (!documentServerUrl) {
+      renderOnlyOfficeError(
+        root,
+        editorHeightPx,
+        "OnlyOffice 서버 주소가 설정되지 않았습니다.",
+        "ONLYOFFICE_DOCUMENT_SERVER_URL 설정을 확인해 주세요."
+      );
+      return;
       root.innerHTML = `<div class="flex h-full items-center justify-center text-sm text-slate-500" style="height:${editorHeightPx};">OnlyOffice 서버 주소가 설정되지 않았습니다.</div>`;
       return;
     }
@@ -969,7 +1031,7 @@
       config.width = config.width || "100%";
       config.height = editorHeight;
 
-      await loadScriptOnce(`${documentServerUrl}/web-apps/apps/api/documents/api.js`);
+      await loadScriptOnce(scriptUrl);
       if (!(window.DocsAPI && window.DocsAPI.DocEditor)) {
         throw new Error("DocsAPI unavailable");
       }
@@ -983,6 +1045,9 @@
       const editor = new window.DocsAPI.DocEditor(holder.id, config);
       onlyOfficeEditors.set(root, editor);
     } catch (error) {
+      const description = describeOnlyOfficeInitError(error, { configUrl, scriptUrl });
+      renderOnlyOfficeError(root, editorHeightPx, description.summary, description.detail);
+      return;
       root.innerHTML = `<div class="flex h-full items-center justify-center px-6 text-center text-sm text-slate-500" style="height:${editorHeightPx};">OnlyOffice 편집기를 불러오지 못했습니다. 환경 변수와 Docker 상태를 확인해 주세요.</div>`;
     }
   }
