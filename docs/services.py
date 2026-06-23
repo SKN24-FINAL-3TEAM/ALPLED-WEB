@@ -1767,32 +1767,151 @@ def build_approval_data_view(value):
     }
 
 
-def build_approval_review_view(value):
+JSON_IDENTITY_KEYS = (
+    "requirement_id",
+    "component_id",
+    "table_id",
+    "column_id",
+    "entity_id",
+    "relationship_id",
+    "screen_id",
+    "interface_id",
+    "scenario_id",
+    "test_case_id",
+    "id",
+    "code",
+    "name",
+)
+
+
+def _find_json_list_identity_key(before_items, after_items):
+    items = [item for item in [*before_items, *after_items] if isinstance(item, dict)]
+    if not items or len(items) != len(before_items) + len(after_items):
+        return None
+    for key in JSON_IDENTITY_KEYS:
+        before_values = [str(item.get(key, "")) for item in before_items]
+        after_values = [str(item.get(key, "")) for item in after_items]
+        if (
+            all(before_values)
+            and all(after_values)
+            and len(before_values) == len(set(before_values))
+            and len(after_values) == len(set(after_values))
+        ):
+            return key
+    return None
+
+
+def _build_generic_json_changes(before, after, *, path="data", changes=None, limit=200):
+    changes = [] if changes is None else changes
+    if len(changes) >= limit:
+        return changes
+
+    if type(before) is not type(after):
+        changes.append(_build_generic_change(path, "modified", before, after))
+        return changes
+
+    if isinstance(before, dict):
+        for key in sorted(set(before) | set(after)):
+            child_path = f"{path}.{key}"
+            if key not in before:
+                changes.append(_build_generic_change(child_path, "added", None, after[key]))
+            elif key not in after:
+                changes.append(_build_generic_change(child_path, "deleted", before[key], None))
+            else:
+                _build_generic_json_changes(before[key], after[key], path=child_path, changes=changes, limit=limit)
+            if len(changes) >= limit:
+                break
+        return changes
+
+    if isinstance(before, list):
+        identity_key = _find_json_list_identity_key(before, after)
+        if identity_key:
+            before_map = {str(item[identity_key]): item for item in before}
+            after_map = {str(item[identity_key]): item for item in after}
+            for identity in sorted(set(before_map) | set(after_map)):
+                child_path = f"{path}[{identity_key}={identity}]"
+                if identity not in before_map:
+                    changes.append(_build_generic_change(child_path, "added", None, after_map[identity]))
+                elif identity not in after_map:
+                    changes.append(_build_generic_change(child_path, "deleted", before_map[identity], None))
+                else:
+                    _build_generic_json_changes(
+                        before_map[identity],
+                        after_map[identity],
+                        path=child_path,
+                        changes=changes,
+                        limit=limit,
+                    )
+                if len(changes) >= limit:
+                    break
+            return changes
+
+        for index in range(max(len(before), len(after))):
+            child_path = f"{path}[{index}]"
+            if index >= len(before):
+                changes.append(_build_generic_change(child_path, "added", None, after[index]))
+            elif index >= len(after):
+                changes.append(_build_generic_change(child_path, "deleted", before[index], None))
+            else:
+                _build_generic_json_changes(before[index], after[index], path=child_path, changes=changes, limit=limit)
+            if len(changes) >= limit:
+                break
+        return changes
+
+    if before != after:
+        changes.append(_build_generic_change(path, "modified", before, after))
+    return changes
+
+
+def _build_generic_change(path, change_type, before, after):
+    title = path.rsplit(".", 1)[-1]
+    message_by_type = {
+        "added": f"{title} 항목이 추가되었습니다.",
+        "deleted": f"{title} 항목이 삭제되었습니다.",
+        "modified": f"{title} 값이 변경되었습니다.",
+    }
+    return {
+        "title": title,
+        "target_path": path,
+        "change_type": change_type,
+        "before": before,
+        "after": after,
+        "message": message_by_type[change_type],
+        "classification_source": "json_diff_fallback",
+    }
+
+
+def build_approval_review_view(value, *, before_data=None, after_data=None):
     data = _coerce_json_value(value)
     if not isinstance(data, dict):
-        return {
-            "status": "",
-            "change_summary": {},
-            "changes": [],
-            "consistency_summary": {},
-            "consistency_messages": [],
-        }
+        data = {}
 
     change_review = data.get("change_review") if isinstance(data.get("change_review"), dict) else {}
     consistency = data.get("consistency_check") if isinstance(data.get("consistency_check"), dict) else {}
     changes = change_review.get("changes") if isinstance(change_review.get("changes"), list) else []
+    changes = [change for change in changes if isinstance(change, dict)]
+    if not changes and before_data is not None and after_data is not None:
+        changes = _build_generic_json_changes(
+            _coerce_json_value(before_data),
+            _coerce_json_value(after_data),
+        )
     messages = consistency.get("messages") if isinstance(consistency.get("messages"), list) else []
     normalized_changes = []
     for change in changes:
-        if not isinstance(change, dict):
-            continue
         normalized_change = dict(change)
         normalized_change["before_display"] = _format_approval_change_value(change.get("before"))
         normalized_change["after_display"] = _format_approval_change_value(change.get("after"))
         normalized_changes.append(normalized_change)
+    change_summary = change_review.get("summary") if isinstance(change_review.get("summary"), dict) else {}
+    if changes and not any(change_summary.get(key) for key in ("added_count", "deleted_count", "modified_count")):
+        change_summary = {
+            "added_count": sum(change.get("change_type") == "added" for change in changes),
+            "deleted_count": sum(change.get("change_type") == "deleted" for change in changes),
+            "modified_count": sum(change.get("change_type") == "modified" for change in changes),
+        }
     return {
         "status": data.get("status") or consistency.get("status") or "",
-        "change_summary": change_review.get("summary") if isinstance(change_review.get("summary"), dict) else {},
+        "change_summary": change_summary,
         "changes": normalized_changes,
         "consistency_summary": consistency.get("summary") if isinstance(consistency.get("summary"), dict) else {},
         "consistency_messages": [message for message in messages if isinstance(message, dict)],

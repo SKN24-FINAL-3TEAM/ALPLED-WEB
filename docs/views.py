@@ -1383,7 +1383,15 @@ def approval_detail(request, approval_sn):
         "review_job": review_job,
         "before_data_view": build_approval_data_view(review_job.before_data) if review_succeeded else None,
         "after_data_view": build_approval_data_view(review_job.after_data) if review_succeeded else None,
-        "review_view": build_approval_review_view(review_job.result) if review_succeeded else None,
+        "review_view": (
+            build_approval_review_view(
+                review_job.result,
+                before_data=review_job.before_data,
+                after_data=review_job.after_data,
+            )
+            if review_succeeded
+            else None
+        ),
         "review_status": review_status,
         "review_succeeded": review_succeeded,
         "review_failed": review_failed,

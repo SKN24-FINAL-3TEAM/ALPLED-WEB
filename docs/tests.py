@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from common.models import Code, YesNoChoices
@@ -15,6 +15,7 @@ from users.models import User
 
 from .models import Document, DocumentApproval, DocumentDetail
 from .services import (
+    build_approval_review_view,
     build_generation_request_payload,
     extract_text_from_docx,
     get_document_detail_bytes,
@@ -22,6 +23,45 @@ from .services import (
     get_onlyoffice_document_server_url,
     start_initial_generation_job,
 )
+
+
+class ApprovalReviewJsonDiffTests(SimpleTestCase):
+    def test_generic_diff_matches_requirements_by_identifier(self):
+        before = {
+            "requirements": [
+                {"requirement_id": "SFR-001", "priority": "상", "description": "기존 내용"},
+                {"requirement_id": "SFR-002", "priority": "중", "description": "유지 내용"},
+            ]
+        }
+        after = {
+            "requirements": [
+                {"requirement_id": "SFR-002", "priority": "중", "description": "유지 내용"},
+                {"requirement_id": "SFR-001", "priority": "최상", "description": "변경 내용"},
+            ]
+        }
+
+        review = build_approval_review_view({}, before_data=before, after_data=after)
+
+        self.assertEqual(len(review["changes"]), 2)
+        paths = {change["target_path"] for change in review["changes"]}
+        self.assertIn("data.requirements[requirement_id=SFR-001].priority", paths)
+        self.assertIn("data.requirements[requirement_id=SFR-001].description", paths)
+        self.assertEqual(review["change_summary"]["modified_count"], 2)
+
+    def test_generic_diff_handles_architecture_component_addition(self):
+        before = {"components": [{"component_id": "WEB-01", "name": "Web"}]}
+        after = {
+            "components": [
+                {"component_id": "WEB-01", "name": "Web"},
+                {"component_id": "API-01", "name": "API"},
+            ]
+        }
+
+        review = build_approval_review_view(None, before_data=before, after_data=after)
+
+        self.assertEqual(len(review["changes"]), 1)
+        self.assertEqual(review["changes"][0]["change_type"], "added")
+        self.assertIn("component_id=API-01", review["changes"][0]["target_path"])
 
 
 class DocumentWorkflowViewTests(TestCase):
@@ -1297,7 +1337,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "tbl_user")
         self.assertContains(response, "사용자명 컬럼이 추가되었습니다.")
-        self.assertContains(response, "SFR-001")
+        self.assertNotContains(response, "요구사항 정합성")
         self.assertContains(response, "변경 전")
         self.assertContains(response, "변경 후")
         self.assertContains(response, "전체 원본 데이터 보기")

@@ -94,22 +94,6 @@
             </div>
           {% endif %}
 
-          <div class="mt-5">
-            <h4 class="text-sm font-semibold text-slate-900">요구사항 정합성</h4>
-            <div class="mt-3 grid gap-3 sm:grid-cols-4">
-              <div class="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">일치 <strong class="float-right text-emerald-700">{{ review_view.consistency_summary.matched_count|default:0 }}</strong></div>
-              <div class="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">누락 <strong class="float-right text-rose-700">{{ review_view.consistency_summary.missing_count|default:0 }}</strong></div>
-              <div class="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">충돌 <strong class="float-right text-amber-700">{{ review_view.consistency_summary.conflict_count|default:0 }}</strong></div>
-              <div class="rounded-xl bg-white px-4 py-3 text-sm text-slate-700">추가 <strong class="float-right text-blue-700">{{ review_view.consistency_summary.added_count|default:0 }}</strong></div>
-            </div>
-            <div class="mt-3 space-y-2">
-              {% for message in review_view.consistency_messages %}
-                <div class="rounded-xl border px-4 py-3 text-sm leading-6 {% if message.type == 'missing' or message.type == 'conflict' %}border-rose-200 bg-rose-50 text-rose-800{% elif message.type == 'matched' %}border-emerald-200 bg-emerald-50 text-emerald-800{% else %}border-blue-200 bg-blue-50 text-blue-800{% endif %}">{% if message.requirement_id %}<strong>{{ message.requirement_id }}</strong> · {% endif %}{{ message.text }}</div>
-              {% empty %}
-                <div class="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">별도의 정합성 메시지가 없습니다.</div>
-              {% endfor %}
-            </div>
-          </div>
         </div>
 
         <details class="mt-4 rounded-2xl border border-slate-200 bg-white">
