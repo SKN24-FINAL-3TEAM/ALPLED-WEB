@@ -449,6 +449,17 @@
     });
   }
 
+  function initApprovalReviewRefresh() {
+    const pendingReview = document.querySelector("[data-approval-review-pending]");
+    if (!pendingReview || pendingReview.dataset.initialized === "true") return;
+    pendingReview.dataset.initialized = "true";
+    const intervalMs = Math.max(
+      Number.parseInt(pendingReview.dataset.refreshIntervalMs || "10000", 10) || 10000,
+      3000,
+    );
+    window.setTimeout(() => window.location.reload(), intervalMs);
+  }
+
   function resubmitForm(form, submitter) {
     if (!form) return;
     form.dataset.skipConfirm = "true";
@@ -1581,5 +1592,6 @@
   syncAllProjectRoles();
   prepareDocUploadUI();
   initDocJobPageStates();
+  initApprovalReviewRefresh();
   initOnlyOfficeEditors();
 })();

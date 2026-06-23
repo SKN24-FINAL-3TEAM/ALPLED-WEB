@@ -22,7 +22,6 @@ from django.views.static import serve as static_serve
 from common.views import set_current_project_view
 from docs.views import (
     approval_approve,
-    approval_consistency,
     approval_detail,
     approval_list,
     approval_reject,
@@ -74,7 +73,6 @@ urlpatterns = [
     path("docs/approvals/", approval_list, name="doc_approval_list"),
     path("docs/approvals/<int:approval_sn>/", approval_detail, name="doc_approval_detail"),
     path("docs/approvals/<int:approval_sn>/cancel/", document_cancel_approval, name="doc_cancel_approval"),
-    path("docs/approvals/<int:approval_sn>/consistency/", approval_consistency, name="doc_approval_consistency"),
     path("docs/approvals/<int:approval_sn>/approve/", approval_approve, name="doc_approval_approve"),
     path("docs/approvals/<int:approval_sn>/reject/", approval_reject, name="doc_approval_reject"),
     path("projects/current/", set_current_project_view, name="set_current_project"),

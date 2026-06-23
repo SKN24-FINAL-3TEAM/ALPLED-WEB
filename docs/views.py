@@ -35,7 +35,8 @@ from .services import (
     approve_request,
     build_approval_queryset,
     build_approval_rows,
-    build_consistency_review,
+    build_approval_data_view,
+    build_approval_review_view,
     build_document_detail_url,
     build_document_rows,
     build_editor_config,
@@ -72,6 +73,7 @@ from .services import (
     get_generation_itf_references,
     get_generation_prerequisite_error,
     get_latest_detail,
+    get_latest_approval_review_job,
     get_onlyoffice_document_server_url,
     get_project_files,
     get_project_nets,
@@ -86,7 +88,6 @@ from .services import (
     is_latest_document_for_type,
     is_project_manager,
     is_project_participant,
-    latest_confirmed_document,
     mark_generation_confirmed,
     parse_callback_payload,
     reject_request,
@@ -99,6 +100,7 @@ from .services import (
     set_generation_draft_document,
     start_auto_apply_job,
     start_initial_generation_job,
+    request_fastapi_approval_review,
     update_generation_selected_files,
     validate_document_content_token,
     wait_for_new_revision,
@@ -1197,8 +1199,16 @@ def document_request_approval(request, document_sn):
         messages.error(request, "승인 요청 내용을 입력해 주세요.")
         return redirect(_document_detail_redirect(document, modal="approval-request"))
 
-    create_approval_request(document, actor, request_content)
-    messages.success(request, "프로젝트 관리자에게 승인 요청을 전송했습니다.")
+    approval = create_approval_request(document, actor, request_content)
+    try:
+        request_fastapi_approval_review(approval.approval_sn)
+    except Exception:
+        messages.warning(
+            request,
+            "승인 요청은 등록했지만 자동 검토 요청을 전송하지 못했습니다. 관리자에게 문의해 주세요.",
+        )
+    else:
+        messages.success(request, "프로젝트 관리자에게 승인 요청을 전송했습니다.")
     return redirect(reverse("doc_detail", args=[document.sn]))
 
 
@@ -1359,32 +1369,10 @@ def approval_detail(request, approval_sn):
     if not is_manager and approval.created_by_id != actor.sn:
         raise Http404
 
-    previous_detail = (
-        document.details.filter(is_deleted="N", created_at__lt=approval.detail.created_at)
-        .exclude(sn=approval.detail_id)
-        .order_by("-created_at", "-sn")
-        .first()
-    )
-    previous_document = previous_detail.document if previous_detail else latest_confirmed_document(
-        current_project,
-        document.document_type_id,
-        exclude_document_sn=document.sn,
-    )
-    if previous_detail is None and previous_document:
-        previous_detail = get_latest_detail(previous_document)
-    previous_version = previous_document.version if previous_document else None
-    try:
-        previous_text = extract_text_from_docx(get_document_detail_bytes(previous_detail))
-        updated_text = extract_text_from_docx(get_document_detail_bytes(approval.detail))
-    except ValueError:
-        messages.error(request, _legacy_detail_error_message())
-        return redirect(reverse("doc_approval_list"))
-    review = (
-        build_consistency_review(approval, previous_text=previous_text, updated_text=updated_text)
-        if request.GET.get("consistency") == "1"
-        else None
-    )
-
+    review_job = get_latest_approval_review_job(approval)
+    review_status = (getattr(review_job, "status_code", "") or "").upper()
+    review_succeeded = review_status == "SUCCEEDED"
+    review_failed = review_status in {"FAILED", "ERROR", "CANCELLED"}
     context = {
         "active_menu": "approvals",
         "title": "산출물 승인 상세",
@@ -1392,24 +1380,20 @@ def approval_detail(request, approval_sn):
         "approval": approval,
         "document": document,
         "is_manager": is_manager,
-        "previous_document": previous_document,
-        "previous_version": previous_version,
-        "previous_text": previous_text,
-        "updated_text": updated_text,
-        "review": review,
+        "review_job": review_job,
+        "before_data_view": build_approval_data_view(review_job.before_data) if review_succeeded else None,
+        "after_data_view": build_approval_data_view(review_job.after_data) if review_succeeded else None,
+        "review_view": build_approval_review_view(review_job.result) if review_succeeded else None,
+        "review_status": review_status,
+        "review_succeeded": review_succeeded,
+        "review_failed": review_failed,
+        "review_poll_interval_ms": get_doc_job_poll_interval_seconds() * 1000,
         "requester_name": getattr(approval.created_by, "name", "-") or "-",
-        "can_take_action": is_manager and approval.approval_status_id == "APRV_REQ",
+        "can_take_action": is_manager and approval.approval_status_id == "APRV_REQ" and review_succeeded,
         "open_approve_modal": request.GET.get("modal") == "approve",
         "open_reject_modal": request.GET.get("modal") == "reject",
     }
     return render(request, "docs/approval_detail.html", context)
-
-
-@login_required(login_url="home")
-def approval_consistency(request, approval_sn):
-    if request.method != "POST":
-        return redirect(reverse("doc_approval_detail", args=[approval_sn]))
-    return redirect(f"{reverse('doc_approval_detail', args=[approval_sn])}?consistency=1")
 
 
 @login_required(login_url="home")

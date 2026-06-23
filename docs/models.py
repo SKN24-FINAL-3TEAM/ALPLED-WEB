@@ -114,3 +114,74 @@ class DocumentApproval(CreatedAtMixin, CreatedByMixin, UpdatedAtMixin, UpdatedBy
     @property
     def sn(self):
         return self.approval_sn
+
+
+class ApprovalReviewJob(models.Model):
+    sn = models.BigAutoField(primary_key=True, db_column="job_sn")
+    job_id = models.CharField(max_length=36, unique=True, db_column="job_id")
+    approval = models.ForeignKey(
+        DocumentApproval,
+        on_delete=models.DO_NOTHING,
+        db_column="docs_aprv_sn",
+        related_name="review_jobs",
+        db_constraint=False,
+    )
+    document = models.ForeignKey(
+        Document,
+        on_delete=models.DO_NOTHING,
+        db_column="docs_sn",
+        related_name="approval_review_jobs",
+        db_constraint=False,
+    )
+    approval_request_detail = models.ForeignKey(
+        DocumentDetail,
+        on_delete=models.DO_NOTHING,
+        db_column="approval_request_docs_dtl_sn",
+        related_name="approval_review_requests",
+        db_constraint=False,
+    )
+    before_detail = models.ForeignKey(
+        DocumentDetail,
+        on_delete=models.DO_NOTHING,
+        db_column="before_docs_dtl_sn",
+        related_name="approval_reviews_as_before",
+        db_constraint=False,
+        null=True,
+        blank=True,
+    )
+    after_detail = models.ForeignKey(
+        DocumentDetail,
+        on_delete=models.DO_NOTHING,
+        db_column="after_docs_dtl_sn",
+        related_name="approval_reviews_as_after",
+        db_constraint=False,
+        null=True,
+        blank=True,
+    )
+    before_data = models.JSONField(db_column="before_data_json", null=True, blank=True)
+    after_data = models.JSONField(db_column="after_data_json", null=True, blank=True)
+    status_code = models.CharField(max_length=30, db_column="job_stts_cd", default="QUEUED")
+    step_code = models.CharField(max_length=50, db_column="job_step_cd", null=True, blank=True)
+    progress_rate = models.IntegerField(db_column="progress_rate", default=0)
+    message = models.CharField(max_length=500, db_column="message_cn", null=True, blank=True)
+    request_data = models.JSONField(db_column="request_json")
+    result = models.JSONField(db_column="result_json", null=True, blank=True)
+    error_code = models.CharField(max_length=100, db_column="error_cd", null=True, blank=True)
+    error_message = models.TextField(db_column="error_msg", null=True, blank=True)
+    request_id = models.CharField(max_length=100, db_column="request_id", null=True, blank=True)
+    worker_id = models.CharField(max_length=100, db_column="worker_id", null=True, blank=True)
+    active_key = models.CharField(max_length=200, db_column="active_key", null=True, blank=True)
+    requested_at = models.DateTimeField(db_column="requested_dt")
+    started_at = models.DateTimeField(db_column="started_dt", null=True, blank=True)
+    completed_at = models.DateTimeField(db_column="completed_dt", null=True, blank=True)
+    heartbeat_at = models.DateTimeField(db_column="heartbeat_dt", null=True, blank=True)
+    updated_at = models.DateTimeField(db_column="updated_dt")
+
+    class Meta:
+        db_table = "tbl_approval_review_job"
+        managed = False
+        verbose_name = "approval review job"
+        verbose_name_plural = "approval review jobs"
+
+    def __str__(self) -> str:
+        return f"{self.job_id} / {self.status_code}"

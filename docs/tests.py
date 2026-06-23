@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -1171,14 +1172,16 @@ class DocumentWorkflowViewTests(TestCase):
         document = self._create_document(sn=1, version="1.0", user=None)
         detail = self._create_detail(sn=1, document=document)
 
-        response = self.client.post(
-            reverse("doc_request_approval", args=[document.sn]),
-            {"request_content": "승인 요청입니다."},
-        )
+        with patch("docs.views.request_fastapi_approval_review", return_value={"status": "accepted"}) as review_mock:
+            response = self.client.post(
+                reverse("doc_request_approval", args=[document.sn]),
+                {"request_content": "승인 요청입니다."},
+            )
 
         self.assertEqual(response.status_code, 302)
         approval = DocumentApproval.objects.get(detail=detail)
         self.assertEqual(approval.request_content, "승인 요청입니다.")
+        review_mock.assert_called_once_with(approval.approval_sn)
 
     def test_generation_draft_request_approval_allows_last_editor(self):
         document = self._create_document(sn=47, version="0", document_type=self.srs_code, user=None)
@@ -1207,11 +1210,133 @@ class DocumentWorkflowViewTests(TestCase):
             updated_by=self.user,
         )
 
-        response = self.client.get(reverse("doc_approval_detail", args=[approval.approval_sn]))
+        review_job = SimpleNamespace(
+            status_code="SUCCEEDED",
+            before_data={"tables": []},
+            after_data={"tables": []},
+            result={"change_review": {"changes": [], "summary": {}}},
+            before_detail_id=None,
+            after_detail_id=None,
+        )
+        with patch("docs.views.get_latest_approval_review_job", return_value=review_job):
+            response = self.client.get(reverse("doc_approval_detail", args=[approval.approval_sn]))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-modal-target="approval-approve-modal"', html=False)
         self.assertContains(response, 'data-modal-target="approval-reject-modal"', html=False)
+        self.assertNotContains(response, "정합성 자동검토")
+
+    def test_approval_detail_shows_pending_review_message(self):
+        document = self._create_document(sn=80, version="1.0", user=None)
+        detail = self._create_detail(sn=80, document=document)
+        approval = DocumentApproval.objects.create(
+            approval_sn=80,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="검토 대기 요청",
+            created_by=self.user,
+            updated_by=self.user,
+        )
+
+        review_job = SimpleNamespace(status_code="PROCESSING")
+        with patch("docs.views.get_latest_approval_review_job", return_value=review_job):
+            response = self.client.get(reverse("doc_approval_detail", args=[approval.approval_sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "변경 이력과 정합성을 확인하고 있습니다.")
+        self.assertContains(response, "data-approval-review-pending", html=False)
+        self.assertNotContains(response, 'data-modal-target="approval-approve-modal"', html=False)
+
+    def test_approval_detail_renders_review_json(self):
+        document = self._create_document(sn=81, version="1.0", user=None)
+        detail = self._create_detail(sn=81, document=document)
+        approval = DocumentApproval.objects.create(
+            approval_sn=81,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="JSON 검토 요청",
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        review_job = SimpleNamespace(
+            status_code="SUCCEEDED",
+            before_detail_id=detail.sn,
+            after_detail_id=detail.sn,
+            before_data={
+                "tables": [
+                    {
+                        "table_id": "tbl_user",
+                        "table_name": "사용자",
+                        "columns": [{"column_id": "user_sn", "logical_name": "사용자 일련번호"}],
+                    }
+                ]
+            },
+            after_data={"tables": []},
+            result={
+                "change_review": {
+                    "summary": {"added_count": 1, "deleted_count": 0, "modified_count": 0},
+                    "changes": [
+                        {
+                            "title": "user_name",
+                            "change_type": "added",
+                            "message": "사용자명 컬럼이 추가되었습니다.",
+                            "affected_artifacts": ["TS"],
+                        }
+                    ],
+                },
+                "consistency_check": {
+                    "summary": {"matched_count": 0, "missing_count": 1, "conflict_count": 0},
+                    "messages": [{"type": "missing", "requirement_id": "SFR-001", "text": "요구사항이 누락되었습니다."}],
+                },
+            },
+        )
+
+        with patch("docs.views.get_latest_approval_review_job", return_value=review_job):
+            response = self.client.get(reverse("doc_approval_detail", args=[approval.approval_sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "tbl_user")
+        self.assertContains(response, "사용자명 컬럼이 추가되었습니다.")
+        self.assertContains(response, "SFR-001")
+        self.assertContains(response, "변경 전")
+        self.assertContains(response, "변경 후")
+        self.assertContains(response, "전체 원본 데이터 보기")
+
+    def test_approval_detail_shows_no_changes_message(self):
+        document = self._create_document(sn=82, version="1.0", user=None)
+        detail = self._create_detail(sn=82, document=document)
+        approval = DocumentApproval.objects.create(
+            approval_sn=82,
+            detail=detail,
+            approval_status=self.approval_requested,
+            request_content="동일 데이터 요청",
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        review_job = SimpleNamespace(
+            status_code="SUCCEEDED",
+            before_detail_id=None,
+            after_detail_id=None,
+            before_data={"requirements": [{"requirement_id": "SFR-001"}]},
+            after_data={"requirements": [{"requirement_id": "SFR-001"}]},
+            result={
+                "change_review": {
+                    "summary": {"added_count": 0, "deleted_count": 0, "modified_count": 0},
+                    "changes": [],
+                },
+                "consistency_check": {
+                    "summary": {"matched_count": 1, "missing_count": 0, "conflict_count": 0},
+                    "messages": [],
+                },
+            },
+        )
+
+        with patch("docs.views.get_latest_approval_review_job", return_value=review_job):
+            response = self.client.get(reverse("doc_approval_detail", args=[approval.approval_sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "변경된 항목이 없습니다.")
+        self.assertContains(response, "변경 전후 데이터가 동일합니다.")
 
     def test_manager_cannot_approve_duplicate_version_for_same_document_type(self):
         document = self._create_document(sn=1, version="1.0", user=None)

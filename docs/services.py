@@ -1,4 +1,3 @@
-import difflib
 import io
 import json
 import os
@@ -24,7 +23,7 @@ from common.storage import build_s3_uri, delete_object, delete_object_at_uri, re
 from files.models import ProjectFile
 from projects.models import ProjectNet, ProjectUserRole
 
-from .models import Document, DocumentApproval, DocumentDetail
+from .models import ApprovalReviewJob, Document, DocumentApproval, DocumentDetail
 
 
 DOCUMENT_CODE_SEQUENCE = ("DOC_SRS", "DOC_ITF", "DOC_ARCH", "DOC_ERD", "DOC_DB", "DOC_TS")
@@ -46,6 +45,7 @@ PROGRESS_FAILED = "PRGRS_FAILED"
 RUNNING_PROGRESS_CODES = (PROGRESS_PENDING, PROGRESS_PROCESSING)
 TERMINAL_PROGRESS_CODES = (PROGRESS_COMPLETED, PROGRESS_FAILED)
 FASTAPI_GENERATE_TIMEOUT_SECONDS = 10
+FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS = 10
 WORKING_DOCUMENT_VERSIONS = ("0", "0.0")
 
 
@@ -686,6 +686,27 @@ def request_fastapi_generate(payload):
         return {"raw": body}
 
 
+def request_fastapi_approval_review(approval_sn):
+    base_url = get_fastapi_base_url()
+    if not base_url:
+        raise ValueError("FastAPI base URL is not configured.")
+
+    url = f"{base_url}/approval-review"
+    payload = {"docs_aprv_sn": approval_sn}
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS) as response:
+        body = response.read().decode("utf-8") or "{}"
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        return {"raw": body}
+
+
 def extract_fastapi_error_message(exc):
     if isinstance(exc, HTTPError):
         try:
@@ -1253,6 +1274,17 @@ def create_approval_request(document, actor, request_content):
     return approval
 
 
+def get_latest_approval_review_job(approval):
+    if approval is None:
+        return None
+    return (
+        ApprovalReviewJob.objects.filter(approval_id=approval.approval_sn)
+        .select_related("before_detail", "after_detail", "approval_request_detail")
+        .order_by("-sn")
+        .first()
+    )
+
+
 @transaction.atomic
 def cancel_approval_request(approval):
     approval.delete()
@@ -1694,52 +1726,87 @@ def validate_document_content_token(document, token):
     )
 
 
-def build_consistency_review(approval, *, previous_text="", updated_text=""):
-    """승인 요청 화면에서 보여줄 1차 정합성 검토 결과를 생성합니다.
+def _coerce_json_value(value):
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
 
-    현재 단계의 검증은 문서 전후 텍스트를 기준으로 한 경량 검증입니다.
-    RFP/회의록 원문 근거 검증이나 산출물별 세부 규칙 검증은 별도 Agent/API 연동이 필요합니다.
-    """
-    requester = approval.created_by.name if approval.created_by else "작성자"
-    previous_text = previous_text or ""
-    updated_text = updated_text or ""
 
-    diff = list(
-        difflib.unified_diff(
-            previous_text.splitlines(),
-            updated_text.splitlines(),
-            lineterm="",
-        )
-    )
-    added_count = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
-    removed_count = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+def build_approval_data_view(value):
+    data = _coerce_json_value(value)
+    if isinstance(data, dict) and isinstance(data.get("tables"), list):
+        tables = []
+        for table in data["tables"]:
+            if not isinstance(table, dict):
+                continue
+            columns = table.get("columns") if isinstance(table.get("columns"), list) else []
+            tables.append(
+                {
+                    "table_id": table.get("table_id") or "-",
+                    "table_name": table.get("table_name") or "",
+                    "description": table.get("description") or "",
+                    "database_name": table.get("database_name") or "",
+                    "tablespace_name": table.get("tablespace_name") or "",
+                    "columns": [column for column in columns if isinstance(column, dict)],
+                }
+            )
+        return {"kind": "tables", "tables": tables, "empty": not tables}
 
-    items = []
-    if not previous_text:
-        items.append("이전 버전이 없어 수정본 단독 기준으로 검토했습니다.")
-    elif not diff:
-        items.append("이전 버전과 수정본의 텍스트 변경 사항이 없습니다.")
-    else:
-        items.append(f"수정본 기준 추가 {added_count}건, 삭제 {removed_count}건의 텍스트 변경이 감지되었습니다.")
-
-    request_content = approval.request_content or ""
-    if request_content and request_content in updated_text:
-        items.append("요청 내용이 수정본 본문에 직접 포함되어 있습니다.")
-    elif request_content:
-        items.append("요청 내용과 수정본 본문의 직접 일치 문구는 확인되지 않아 수동 확인이 필요합니다.")
-    else:
-        items.append("요청 내용이 비어 있어 변경 근거 확인이 필요합니다.")
-
-    if updated_text.strip():
-        items.append("수정본 문서 텍스트 추출은 정상적으로 수행되었습니다.")
-    else:
-        items.append("수정본에서 추출된 텍스트가 없어 파일 저장 또는 문서 파싱 상태를 확인해야 합니다.")
+    if data in (None, "", [], {}):
+        return {"kind": "empty", "empty": True}
 
     return {
-        "title": "정합성 자동 검토 결과",
-        "summary": f"{requester}의 수정 요청을 검토했습니다.",
-        "items": items,
+        "kind": "json",
+        "formatted": json.dumps(data, ensure_ascii=False, indent=2, default=str),
+        "empty": False,
     }
+
+
+def build_approval_review_view(value):
+    data = _coerce_json_value(value)
+    if not isinstance(data, dict):
+        return {
+            "status": "",
+            "change_summary": {},
+            "changes": [],
+            "consistency_summary": {},
+            "consistency_messages": [],
+        }
+
+    change_review = data.get("change_review") if isinstance(data.get("change_review"), dict) else {}
+    consistency = data.get("consistency_check") if isinstance(data.get("consistency_check"), dict) else {}
+    changes = change_review.get("changes") if isinstance(change_review.get("changes"), list) else []
+    messages = consistency.get("messages") if isinstance(consistency.get("messages"), list) else []
+    normalized_changes = []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        normalized_change = dict(change)
+        normalized_change["before_display"] = _format_approval_change_value(change.get("before"))
+        normalized_change["after_display"] = _format_approval_change_value(change.get("after"))
+        normalized_changes.append(normalized_change)
+    return {
+        "status": data.get("status") or consistency.get("status") or "",
+        "change_summary": change_review.get("summary") if isinstance(change_review.get("summary"), dict) else {},
+        "changes": normalized_changes,
+        "consistency_summary": consistency.get("summary") if isinstance(consistency.get("summary"), dict) else {},
+        "consistency_messages": [message for message in messages if isinstance(message, dict)],
+    }
+
+
+def _format_approval_change_value(value):
+    if value is None:
+        return "없음"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    if isinstance(value, bool):
+        return "예" if value else "아니오"
+    return str(value)
 
 
 def get_project_files(project, *, file_ids=None, allowed_types=None):
