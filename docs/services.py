@@ -5,6 +5,7 @@ import time
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
+import requests
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -47,6 +48,7 @@ RUNNING_PROGRESS_CODES = (PROGRESS_PENDING, PROGRESS_PROCESSING)
 TERMINAL_PROGRESS_CODES = (PROGRESS_COMPLETED, PROGRESS_FAILED)
 FASTAPI_GENERATE_TIMEOUT_SECONDS = 10
 FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS = 10
+FASTAPI_CLIENT_USER_AGENT = "ALPLED-WEB/1.0 (Django; requests)"
 WORKING_DOCUMENT_VERSIONS = ("0", "0.0")
 GENERATION_JOB_KIND_INITIAL = "initial"
 GENERATION_JOB_KIND_AUTO_APPLY = "auto_apply"
@@ -149,11 +151,25 @@ def get_fastapi_api_key():
 
 
 def build_fastapi_json_headers():
-    headers = {"Content-Type": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": FASTAPI_CLIENT_USER_AGENT,
+    }
     api_key = get_fastapi_api_key()
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def post_fastapi_json(url, payload, *, timeout_seconds):
+    headers = build_fastapi_json_headers()
+    with requests.Session() as session:
+        # Keep the previous behavior that ignored HTTP(S)_PROXY environment variables.
+        session.trust_env = False
+        response = session.post(url, json=payload, headers=headers, timeout=timeout_seconds)
+        response.raise_for_status()
+        return response
 
 
 def get_doc_job_poll_interval_seconds():
@@ -679,24 +695,22 @@ def request_fastapi_generate(payload):
         url=url,
         timeout_seconds=timeout_seconds,
         authorization_present="Authorization" in headers,
+        user_agent=headers.get("User-Agent"),
         payload=_summarize_generation_payload(payload),
     )
-    request = Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
     try:
-        with urlopen(request, timeout=timeout_seconds) as response:
-            status_code = getattr(response, "status", None) or response.getcode()
-            body = response.read().decode("utf-8") or "{}"
+        response = post_fastapi_json(url, payload, timeout_seconds=timeout_seconds)
+        status_code = response.status_code
+        body = response.text or "{}"
     except Exception as exc:
+        response = getattr(exc, "response", None)
         _debug_generation_log(
             "fastapi_request_error",
             url=url,
             error_type=type(exc).__name__,
             error=str(exc),
+            status_code=getattr(response, "status_code", None),
+            body_preview=_truncate_log_value(getattr(response, "text", "") or ""),
         )
         traceback.print_exc()
         raise
@@ -720,14 +734,8 @@ def request_fastapi_approval_review(approval_sn):
 
     url = f"{base_url}/approval-review"
     payload = {"docs_aprv_sn": approval_sn}
-    request = Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=build_fastapi_json_headers(),
-        method="POST",
-    )
-    with urlopen(request, timeout=FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS) as response:
-        body = response.read().decode("utf-8") or "{}"
+    response = post_fastapi_json(url, payload, timeout_seconds=FASTAPI_APPROVAL_REVIEW_TIMEOUT_SECONDS)
+    body = response.text or "{}"
     try:
         return json.loads(body)
     except json.JSONDecodeError:
@@ -735,6 +743,28 @@ def request_fastapi_approval_review(approval_sn):
 
 
 def extract_fastapi_error_message(exc):
+    if isinstance(exc, requests.HTTPError):
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        body = getattr(response, "text", "") or ""
+        if body:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict):
+                detail = payload.get("detail")
+                if isinstance(detail, str) and detail.strip():
+                    return f"FastAPI error {status_code}: {detail.strip()}"
+                if isinstance(detail, list) and detail:
+                    first_detail = detail[0]
+                    if isinstance(first_detail, dict):
+                        message = first_detail.get("msg") or first_detail.get("message")
+                        if message:
+                            return f"FastAPI error {status_code}: {message}"
+        return f"FastAPI error {status_code}: {exc}"
+    if isinstance(exc, requests.RequestException):
+        return f"FastAPI connection failed: {exc}"
     if isinstance(exc, HTTPError):
         try:
             body = exc.read().decode("utf-8")

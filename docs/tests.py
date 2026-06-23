@@ -71,77 +71,79 @@ class ApprovalReviewJsonDiffTests(SimpleTestCase):
 
 class FastapiRequestHeaderTests(SimpleTestCase):
     class _DummyResponse:
-        status = 200
+        status_code = 200
 
         def __init__(self, body):
-            self._body = body
+            self.text = body.decode("utf-8")
+
+        def raise_for_status(self):
+            return None
+
+    class _DummySession:
+        def __init__(self, captured, response_body):
+            self.captured = captured
+            self.response_body = response_body
+            self.trust_env = True
 
         def __enter__(self):
+            self.captured["session"] = self
             return self
 
         def __exit__(self, exc_type, exc, tb):
             return False
 
-        def read(self):
-            return self._body
-
-        def getcode(self):
-            return self.status
-
-    @staticmethod
-    def _normalized_headers(request):
-        return {key.lower(): value for key, value in request.header_items()}
+        def post(self, url, json=None, headers=None, timeout=None):
+            self.captured["url"] = url
+            self.captured["json"] = json
+            self.captured["headers"] = headers or {}
+            self.captured["timeout"] = timeout
+            self.captured["trust_env"] = self.trust_env
+            return FastapiRequestHeaderTests._DummyResponse(self.response_body)
 
     def test_generate_request_includes_bearer_authorization_header(self):
         captured = {}
-
-        def fake_urlopen(request, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return self._DummyResponse(b'{"status":"accepted"}')
+        response_body = b'{"status":"accepted"}'
 
         with self.settings(FASTAPI_BASE_URL="https://example.runpod.net", FASTAPI_API_KEY="rpa_test_key"):
-            with patch("docs.services.urlopen", side_effect=fake_urlopen):
+            with patch("docs.services.requests.Session", return_value=self._DummySession(captured, response_body)):
                 response = request_fastapi_generate({"project_sn": 1, "docs_cd": "DOC_SRS"})
 
         self.assertEqual(response["status"], "accepted")
-        headers = self._normalized_headers(captured["request"])
+        headers = {key.lower(): value for key, value in captured["headers"].items()}
         self.assertEqual(headers["authorization"], "Bearer rpa_test_key")
         self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["user-agent"], "ALPLED-WEB/1.0 (Django; requests)")
+        self.assertTrue(headers["accept"].startswith("application/json"))
+        self.assertFalse(captured["trust_env"])
 
     def test_approval_review_request_includes_bearer_authorization_header(self):
         captured = {}
-
-        def fake_urlopen(request, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return self._DummyResponse(b'{"status":"accepted"}')
+        response_body = b'{"status":"accepted"}'
 
         with self.settings(FASTAPI_BASE_URL="https://example.runpod.net", FASTAPI_API_KEY="rpa_test_key"):
-            with patch("docs.services.urlopen", side_effect=fake_urlopen):
+            with patch("docs.services.requests.Session", return_value=self._DummySession(captured, response_body)):
                 response = request_fastapi_approval_review(12)
 
         self.assertEqual(response["status"], "accepted")
-        headers = self._normalized_headers(captured["request"])
+        headers = {key.lower(): value for key, value in captured["headers"].items()}
         self.assertEqual(headers["authorization"], "Bearer rpa_test_key")
         self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["user-agent"], "ALPLED-WEB/1.0 (Django; requests)")
+        self.assertFalse(captured["trust_env"])
 
     def test_approval_review_request_omits_authorization_header_without_api_key(self):
         captured = {}
-
-        def fake_urlopen(request, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return self._DummyResponse(b'{"status":"accepted"}')
+        response_body = b'{"status":"accepted"}'
 
         with self.settings(FASTAPI_BASE_URL="https://example.runpod.net", FASTAPI_API_KEY=""):
-            with patch("docs.services.urlopen", side_effect=fake_urlopen):
+            with patch("docs.services.requests.Session", return_value=self._DummySession(captured, response_body)):
                 response = request_fastapi_approval_review(12)
 
         self.assertEqual(response["status"], "accepted")
-        headers = self._normalized_headers(captured["request"])
+        headers = {key.lower(): value for key, value in captured["headers"].items()}
         self.assertNotIn("authorization", headers)
         self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["user-agent"], "ALPLED-WEB/1.0 (Django; requests)")
 
 
 class DocumentWorkflowViewTests(TestCase):
