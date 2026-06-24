@@ -132,8 +132,7 @@
   let noticeResolver = null;
   let docJobPollTimer = null;
   let docJobElapsedTimer = null;
-  let docJobElapsedSeconds = 0;
-  let docJobElapsedStartedAtMs = null;
+  let docJobElapsedAnchorMs = null;
 
   function setConfirmTone(button, tone) {
     if (!button) return;
@@ -279,7 +278,7 @@
       window.clearInterval(docJobElapsedTimer);
       docJobElapsedTimer = null;
     }
-    docJobElapsedStartedAtMs = null;
+    docJobElapsedAnchorMs = null;
   }
 
   function formatElapsedTime(totalSeconds) {
@@ -305,53 +304,42 @@
     }
   }
 
-  function resolveElapsedSeconds(payload = {}, fallbackSeconds = 0) {
-    const startedAt = Date.parse(payload.started_at || "");
-    if (!Number.isNaN(startedAt)) {
-      return Math.max(Math.floor((Date.now() - startedAt) / 1000), 0);
-    }
+  function readElapsedSeconds(payload = {}, fallbackSeconds = 0) {
     return Math.max(Number.parseInt(payload.elapsed_seconds ?? fallbackSeconds ?? 0, 10) || 0, 0);
   }
 
-  function resolveStartedAtMs(payload = {}) {
-    const startedAt = Date.parse(payload.started_at || "");
-    return Number.isNaN(startedAt) ? null : startedAt;
+  function resolveElapsedAnchorMs(payload = {}, fallbackSeconds = 0) {
+    const startedAtMs = Date.parse(payload.started_at || "");
+    if (!Number.isNaN(startedAtMs)) {
+      return startedAtMs;
+    }
+    return Date.now() - (readElapsedSeconds(payload, fallbackSeconds) * 1000);
   }
 
-  function renderCurrentElapsedTime() {
-    if (docJobElapsedStartedAtMs !== null) {
-      renderElapsedTime(Math.max(Math.floor((Date.now() - docJobElapsedStartedAtMs) / 1000), 0));
+  function renderElapsedFromAnchor(anchorMs) {
+    if (!Number.isFinite(anchorMs)) {
+      renderElapsedTime(0);
       return;
     }
-    renderElapsedTime(docJobElapsedSeconds);
+    renderElapsedTime(Math.max(Math.floor((Date.now() - anchorMs) / 1000), 0));
   }
 
-  function startElapsedTimer(initialSeconds = 0, startedAtMs = null) {
+  function startElapsedTimer(anchorMs = Date.now()) {
     clearDocJobElapsedTimer();
-    docJobElapsedStartedAtMs = Number.isFinite(startedAtMs) ? startedAtMs : null;
-    docJobElapsedSeconds = Math.max(Number.parseInt(initialSeconds || 0, 10) || 0, 0);
-    renderCurrentElapsedTime();
+    docJobElapsedAnchorMs = Number.isFinite(anchorMs) ? anchorMs : Date.now();
+    renderElapsedFromAnchor(docJobElapsedAnchorMs);
     docJobElapsedTimer = window.setInterval(() => {
-      if (docJobElapsedStartedAtMs === null) {
-        docJobElapsedSeconds += 1;
-      }
-      renderCurrentElapsedTime();
+      renderElapsedFromAnchor(docJobElapsedAnchorMs);
     }, 1000);
   }
 
   function syncElapsedTimer(payload = {}, fallbackSeconds = 0) {
-    const startedAtMs = resolveStartedAtMs(payload);
-    if (startedAtMs !== null) {
-      if (docJobElapsedTimer && docJobElapsedStartedAtMs === startedAtMs) {
-        renderCurrentElapsedTime();
-        return;
-      }
-      startElapsedTimer(0, startedAtMs);
+    const anchorMs = resolveElapsedAnchorMs(payload, fallbackSeconds);
+    if (docJobElapsedTimer && docJobElapsedAnchorMs === anchorMs) {
+      renderElapsedFromAnchor(anchorMs);
       return;
     }
-    if (!docJobElapsedTimer) {
-      startElapsedTimer(resolveElapsedSeconds(payload, fallbackSeconds));
-    }
+    startElapsedTimer(anchorMs);
   }
 
   function updateJobProgress({ title, message }) {
@@ -628,7 +616,7 @@
     const formData = new FormData(form);
     const fallbackTitle = form.dataset.jobTitle || "문서 작업 진행 중";
     const requestUrl = resolveFormSubmitUrl(form);
-    startElapsedTimer(0);
+    startElapsedTimer(Date.now());
 
     form.dataset.submitting = "true";
     hideOpenModals();
@@ -673,7 +661,7 @@
         title: payload.title || fallbackTitle,
         pollIntervalMs: payload.poll_interval_ms || 10000,
         fallbackRedirectUrl: payload.redirect_url || "",
-        fallbackElapsedSeconds: resolveElapsedSeconds(payload, 0),
+        fallbackElapsedSeconds: readElapsedSeconds(payload, 0),
       });
     } catch (error) {
       clearDocJobPollTimer();

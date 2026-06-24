@@ -1,4 +1,6 @@
+from datetime import timedelta
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -116,6 +118,9 @@ from .services import (
     start_auto_apply_job,
     start_initial_generation_job,
 )
+
+GENERATION_JOB_WALLCLOCK_TIME_ZONE = ZoneInfo("Asia/Seoul")
+GENERATION_JOB_FUTURE_SKEW_THRESHOLD = timedelta(hours=1)
 
 
 def _get_document_or_404(project, document_sn):
@@ -391,6 +396,17 @@ def _get_job_timing(job):
         reference_dt = getattr(job, "requested_at", None)
     if reference_dt is None:
         return "", 0
+    if (
+        timezone.is_aware(reference_dt)
+        and reference_dt.utcoffset() == timedelta(0)
+        and reference_dt - timezone.now() > GENERATION_JOB_FUTURE_SKEW_THRESHOLD
+    ):
+        # GenerationJob timestamps in the live DB are stored as Seoul wall-clock values.
+        # When Django attaches UTC to that naive value, elapsed time clamps to 0 forever.
+        reference_dt = timezone.make_aware(
+            reference_dt.replace(tzinfo=None),
+            GENERATION_JOB_WALLCLOCK_TIME_ZONE,
+        )
     started_at = timezone.localtime(reference_dt)
     elapsed_seconds = max(int((timezone.now() - reference_dt).total_seconds()), 0)
     return started_at.isoformat(), elapsed_seconds

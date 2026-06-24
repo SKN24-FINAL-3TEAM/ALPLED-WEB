@@ -1208,6 +1208,32 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertGreaterEqual(payload["elapsed_seconds"], 120)
         self.assertLess(payload["elapsed_seconds"], 180)
 
+    def test_document_job_status_reinterprets_future_utc_job_timestamp_as_seoul_wallclock(self):
+        started_at = timezone.now() + timedelta(hours=8, minutes=55)
+        job = self._create_generation_job(
+            sn=44,
+            job_id="job-srs-processing-kst-wallclock",
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+            started_at=started_at,
+        )
+
+        response = self.client.get(
+            reverse("doc_job_status"),
+            {
+                "job_kind": "initial",
+                "docs_cd": "DOC_SRS",
+                "job_id": job.job_id,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "running")
+        self.assertGreaterEqual(payload["elapsed_seconds"], 240)
+        self.assertLess(payload["elapsed_seconds"], 360)
+
     def test_document_job_status_uses_session_snapshot_until_db_job_exists(self):
         self._set_doc_job_snapshot(
             status="running",
