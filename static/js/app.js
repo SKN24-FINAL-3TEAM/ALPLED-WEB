@@ -231,28 +231,51 @@
     return document.querySelector("[data-job-progress-elapsed]");
   }
 
-  function getDocJobInlineRoot() {
+  function getDocJobStatusInlineRoot() {
     return document.querySelector("[data-doc-job-inline]");
   }
 
-  function getDocJobInlineTitle() {
+  function getDocJobStatusInlineTitle() {
     return document.querySelector("[data-doc-job-inline-title]");
   }
 
-  function getDocJobInlineMessage() {
+  function getDocJobStatusInlineMessage() {
     return document.querySelector("[data-doc-job-inline-message]");
   }
 
-  function getDocJobInlineBadge() {
+  function getDocJobStatusInlineBadge() {
     return document.querySelector("[data-doc-job-inline-badge]");
   }
 
-  function getDocJobInlineElapsed() {
+  function getDocJobStatusInlineElapsed() {
     return document.querySelector("[data-doc-job-inline-elapsed]");
   }
 
-  function getDocJobCtaElapsedNodes() {
-    return document.querySelectorAll("[data-doc-job-cta-elapsed]");
+  function getDocJobCtaInlineRoot() {
+    return document.querySelector("[data-doc-job-cta-inline]");
+  }
+
+  function getDocJobCtaInlineTitle() {
+    return document.querySelector("[data-doc-job-cta-inline-title]");
+  }
+
+  function getDocJobCtaInlineMessage() {
+    return document.querySelector("[data-doc-job-cta-inline-message]");
+  }
+
+  function getDocJobCtaInlineBadge() {
+    return document.querySelector("[data-doc-job-cta-inline-badge]");
+  }
+
+  function getDocJobCtaInlineElapsed() {
+    return document.querySelector("[data-doc-job-cta-inline-elapsed]");
+  }
+
+  function getDocJobCtaSlot(form = null) {
+    if (form) {
+      return form.closest("[data-doc-job-cta-slot]");
+    }
+    return document.querySelector("[data-doc-job-cta-slot]");
   }
 
   function getDocProgressBadge(documentCode) {
@@ -292,13 +315,14 @@
     if (progressElapsedNode) {
       progressElapsedNode.textContent = formatted;
     }
-    const inlineElapsedNode = getDocJobInlineElapsed();
-    if (inlineElapsedNode) {
-      inlineElapsedNode.textContent = formatted;
+    const statusInlineElapsedNode = getDocJobStatusInlineElapsed();
+    if (statusInlineElapsedNode) {
+      statusInlineElapsedNode.textContent = formatted;
     }
-    getDocJobCtaElapsedNodes().forEach((ctaElapsedNode) => {
-      ctaElapsedNode.textContent = formatted;
-    });
+    const ctaInlineElapsedNode = getDocJobCtaInlineElapsed();
+    if (ctaInlineElapsedNode) {
+      ctaInlineElapsedNode.textContent = formatted;
+    }
   }
 
   function resolveElapsedSeconds(payload = {}, fallbackSeconds = 0) {
@@ -440,14 +464,37 @@
   }
 
   function updateDocJobInline(payload = {}) {
-    const root = getDocJobInlineRoot();
+    const root = getDocJobStatusInlineRoot();
     if (!root) return;
 
     const statusCode = resolveJobStatusCode(payload);
     const statusLabel = resolveJobStatusLabel(payload);
-    const titleNode = getDocJobInlineTitle();
-    const messageNode = getDocJobInlineMessage();
-    const badgeNode = getDocJobInlineBadge();
+    const titleNode = getDocJobStatusInlineTitle();
+    const messageNode = getDocJobStatusInlineMessage();
+    const badgeNode = getDocJobStatusInlineBadge();
+
+    root.classList.remove("hidden");
+    if (titleNode) {
+      titleNode.textContent = payload.title || "문서 작업 상태";
+    }
+    if (messageNode) {
+      messageNode.textContent = payload.message || "작업 상태를 확인하고 있습니다.";
+    }
+    if (badgeNode) {
+      badgeNode.className = getInlineBadgeClass(statusCode);
+      badgeNode.textContent = statusLabel;
+    }
+  }
+
+  function updateDocJobCtaInline(payload = {}) {
+    const root = getDocJobCtaInlineRoot();
+    if (!root) return;
+
+    const statusCode = resolveJobStatusCode(payload);
+    const statusLabel = resolveJobStatusLabel(payload);
+    const titleNode = getDocJobCtaInlineTitle();
+    const messageNode = getDocJobCtaInlineMessage();
+    const badgeNode = getDocJobCtaInlineBadge();
 
     root.classList.remove("hidden");
     if (titleNode) {
@@ -472,50 +519,48 @@
 
   function updateDocJobUi(payload = {}) {
     updateDocJobInline(payload);
+    updateDocJobCtaInline(payload);
     updateDocProgressBadge(payload);
   }
 
-  function showDocJobCtaNotice(form, payload = {}) {
-    const root = form?.closest("[data-doc-job-inline]");
+  function showDocJobCtaInline(form, payload = {}) {
+    const root = getDocJobCtaSlot(form);
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
-    const noticeNode = root.querySelector("[data-doc-job-cta-notice]");
-    const messageNode = root.querySelector("[data-doc-job-cta-message]");
+    const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
     if (formNode) {
       formNode.classList.add("hidden");
     }
-    if (noticeNode) {
-      noticeNode.classList.remove("hidden");
+    if (inlineNode) {
+      inlineNode.classList.remove("hidden");
     }
-    if (messageNode) {
-      messageNode.textContent = payload.cta_message || "산출물을 생성중입니다.";
-    }
+    updateDocJobCtaInline(payload);
   }
 
   function restoreDocJobCtaForm(form) {
-    const root = form?.closest("[data-doc-job-inline]");
+    const root = getDocJobCtaSlot(form);
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
-    const noticeNode = root.querySelector("[data-doc-job-cta-notice]");
+    const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
     if (formNode) {
       formNode.classList.remove("hidden");
     }
-    if (noticeNode) {
-      noticeNode.classList.add("hidden");
+    if (inlineNode) {
+      inlineNode.classList.add("hidden");
     }
   }
 
   function restoreDocJobCtaForms() {
     let restored = false;
-    document.querySelectorAll("[data-doc-job-inline]").forEach((root) => {
+    document.querySelectorAll("[data-doc-job-cta-slot]").forEach((root) => {
       const formNode = root.querySelector("[data-doc-job-form]");
-      const noticeNode = root.querySelector("[data-doc-job-cta-notice]");
+      const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
       if (formNode) {
         formNode.classList.remove("hidden");
         restored = true;
       }
-      if (noticeNode) {
-        noticeNode.classList.add("hidden");
+      if (inlineNode) {
+        inlineNode.classList.add("hidden");
       }
     });
     return restored;
@@ -655,7 +700,7 @@
         return;
       }
 
-      showDocJobCtaNotice(form, payload);
+      showDocJobCtaInline(form, payload);
 
       await pollDocJob(payload.poll_url, {
         title: payload.title || fallbackTitle,

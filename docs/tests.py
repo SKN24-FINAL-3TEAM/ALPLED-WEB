@@ -614,8 +614,9 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertContains(response, f'action="{reverse("doc_generate")}"', html=False)
         self.assertContains(response, f'data-submit-url="{reverse("doc_generate")}"', html=False)
         self.assertContains(response, 'data-doc-job-inline', html=False)
-        self.assertContains(response, 'data-doc-job-cta-notice', html=False)
-        self.assertContains(response, "산출물을 생성중입니다.")
+        self.assertContains(response, 'data-doc-job-cta-inline', html=False)
+        self.assertNotContains(response, 'data-doc-job-cta-notice', html=False)
+        self.assertContains(response, "작업 상태를 확인하고 있습니다.")
 
     def test_generate_view_shows_regeneration_button_when_saved_flow_is_complete(self):
         confirmed_documents = {}
@@ -742,10 +743,12 @@ class DocumentWorkflowViewTests(TestCase):
                 response = self.client.get(reverse("doc_generate"), {"docs_cd": code, "resume": 1})
 
                 self.assertEqual(response.status_code, 200)
-                self.assertContains(response, "산출물을 생성중입니다.")
-                self.assertContains(response, "경과 시간")
+                self.assertContains(response, "문서를 생성 중입니다.")
+                self.assertContains(response, "Elapsed")
                 self.assertContains(response, 'data-doc-job-inline', html=False)
-                self.assertContains(response, 'data-doc-job-cta-elapsed', html=False)
+                self.assertContains(response, 'data-doc-job-cta-inline', html=False)
+                self.assertContains(response, 'data-doc-job-cta-inline-elapsed', html=False)
+                self.assertNotContains(response, 'data-doc-job-cta-notice', html=False)
                 self.assertNotContains(response, 'data-doc-job-cta-root', html=False)
                 self.assertNotContains(response, 'data-doc-job-form', html=False)
 
