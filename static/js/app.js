@@ -250,6 +250,10 @@
     return document.querySelector("[data-doc-job-inline-elapsed]");
   }
 
+  function getDocJobCtaElapsed() {
+    return document.querySelector("[data-doc-job-cta-elapsed]");
+  }
+
   function getDocProgressBadge(documentCode) {
     return Array.from(document.querySelectorAll("[data-doc-progress-badge]")).find(
       (node) => node.dataset.docProgressBadge === String(documentCode || ""),
@@ -288,6 +292,10 @@
     const inlineElapsedNode = getDocJobInlineElapsed();
     if (inlineElapsedNode) {
       inlineElapsedNode.textContent = formatted;
+    }
+    const ctaElapsedNode = getDocJobCtaElapsed();
+    if (ctaElapsedNode) {
+      ctaElapsedNode.textContent = formatted;
     }
   }
 
@@ -544,7 +552,6 @@
         throw new Error(payload.message || "문서 작업 요청을 처리하지 못했습니다.");
       }
 
-      hideJobProgress();
       updateDocJobUi({
         ...payload,
         title: payload.title || fallbackTitle,

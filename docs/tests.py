@@ -652,6 +652,25 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertIn(reverse("doc_job_status"), payload["poll_url"])
         start_job_mock.assert_called_once()
 
+    def test_doc_generate_replaces_start_button_with_running_notice_when_job_is_active(self):
+        project_file = self._create_project_file()
+        self._set_generation_state(selected_file_ids=[project_file.sn])
+        self._create_generation_job(
+            sn=12,
+            job_id="job-srs-running-notice",
+            document=None,
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+        )
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_SRS", "resume": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "사용자 요구사항 정의서 생성 중입니다. 잠시만 기다려 주세요.")
+        self.assertContains(response, "경과 시간")
+        self.assertContains(response, 'data-doc-job-cta-elapsed', html=False)
+        self.assertNotContains(response, 'data-doc-job-form', html=False)
+
     def test_confirming_initial_draft_advances_to_next_document_step(self):
         project_file = self._create_project_file()
         draft = self._create_document(sn=1, version="0", document_type=self.srs_code)
