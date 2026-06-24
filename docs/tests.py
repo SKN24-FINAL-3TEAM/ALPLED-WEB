@@ -1,5 +1,6 @@
 import shutil
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -419,7 +420,9 @@ class DocumentWorkflowViewTests(TestCase):
         error_code=None,
         error_message=None,
         request_id="req-1",
+        started_at=None,
     ):
+        now = timezone.now()
         return GenerationJob.objects.create(
             sn=sn,
             job_id=job_id or f"job-{sn:04d}",
@@ -436,11 +439,11 @@ class DocumentWorkflowViewTests(TestCase):
             max_retry_count=1,
             active_key=None,
             request_id=request_id,
-            requested_at=timezone.now(),
-            started_at=timezone.now(),
+            requested_at=now,
+            started_at=started_at or now,
             completed_at=None,
             heartbeat_at=None,
-            updated_at=timezone.now(),
+            updated_at=now,
         )
 
     def _set_generation_state(
@@ -711,6 +714,8 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["status"], "started")
         self.assertEqual(payload["docs_cd"], "DOC_SRS")
         self.assertEqual(payload["job_id"], job.job_id)
+        self.assertEqual(payload["started_at"], timezone.localtime(job.started_at).isoformat())
+        self.assertGreaterEqual(payload["elapsed_seconds"], 0)
         self.assertIn(reverse("doc_job_status"), payload["poll_url"])
         start_job_mock.assert_called_once()
 
@@ -741,7 +746,33 @@ class DocumentWorkflowViewTests(TestCase):
                 self.assertContains(response, "경과 시간")
                 self.assertContains(response, 'data-doc-job-inline', html=False)
                 self.assertContains(response, 'data-doc-job-cta-elapsed', html=False)
+                self.assertNotContains(response, 'data-doc-job-cta-root', html=False)
                 self.assertNotContains(response, 'data-doc-job-form', html=False)
+
+    def test_doc_generate_restores_start_button_after_failed_generation_job(self):
+        project_file = self._create_project_file()
+        draft = self._create_document(sn=31, version="0", document_type=self.srs_code)
+        self._set_generation_state(
+            selected_file_ids=[project_file.sn],
+            draft_documents={"DOC_SRS": draft.sn},
+        )
+        self._create_generation_job(
+            sn=31,
+            job_id="job-srs-failed-retry",
+            document=draft,
+            document_type=self.srs_code,
+            job_status=self.progress_failed,
+        )
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_SRS", "resume": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["current_step_code"], "DOC_SRS")
+        self.assertIsNone(response.context["current_draft"])
+        self.assertTrue(response.context["can_start_current_generation"])
+        self.assertContains(response, 'data-doc-job-form', html=False)
+        self.assertContains(response, "사용자 요구사항 정의서 생성")
+        self.assertNotIn("DOC_SRS", self.client.session["docs_initial_generation"]["draft_documents"])
 
     def test_confirming_initial_draft_advances_to_next_document_step(self):
         project_file = self._create_project_file()
@@ -1127,6 +1158,33 @@ class DocumentWorkflowViewTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["redirect_url"], reverse("doc_detail", args=[draft.sn]))
+
+    def test_document_job_status_uses_generation_job_started_dt_for_elapsed_time(self):
+        started_at = timezone.now() - timedelta(seconds=125)
+        job = self._create_generation_job(
+            sn=41,
+            job_id="job-srs-processing-started-at",
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+            started_at=started_at,
+        )
+
+        response = self.client.get(
+            reverse("doc_job_status"),
+            {
+                "job_kind": "initial",
+                "docs_cd": "DOC_SRS",
+                "job_id": job.job_id,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["started_at"], timezone.localtime(started_at).isoformat())
+        self.assertGreaterEqual(payload["elapsed_seconds"], 120)
+        self.assertLess(payload["elapsed_seconds"], 180)
 
     def test_document_job_status_uses_session_snapshot_until_db_job_exists(self):
         self._set_doc_job_snapshot(

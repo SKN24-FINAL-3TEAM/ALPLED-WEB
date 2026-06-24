@@ -254,8 +254,38 @@ def _is_generation_resume_request(request):
     return request.GET.get("resume") == "1"
 
 
+def _clear_failed_generation_drafts(current_project, state):
+    if current_project is None:
+        return False
+    draft_documents = dict(state.get("draft_documents", {}) or {})
+    changed = False
+    for document_code, document_sn in draft_documents.items():
+        draft = (
+            Document.objects.filter(
+                project=current_project,
+                document_type_id=document_code,
+                sn=document_sn,
+            )
+            .only("sn", "progress_status_id")
+            .first()
+        )
+        latest_job = get_latest_generation_job(
+            current_project,
+            document_code,
+            job_kind=GENERATION_JOB_KIND_INITIAL,
+        )
+        draft_failed = draft is not None and draft.progress_status_id == PROGRESS_FAILED
+        job_failed = latest_job is not None and latest_job.job_status_id == PROGRESS_FAILED
+        if draft_failed or job_failed:
+            clear_generation_draft_document(state, document_code)
+            changed = True
+    return changed
+
+
 def _get_generation_context(request, current_project, actor, document_code, state=None):
     state = state or get_generation_state(request.session, current_project)
+    if _clear_failed_generation_drafts(current_project, state):
+        save_generation_state(request.session, state)
     selected_files = get_generation_selected_files(current_project, state)
     current_code = get_current_generation_code(state, current_project, preferred_code=document_code)
     current_draft = get_generation_draft_document(current_project, state, current_code)

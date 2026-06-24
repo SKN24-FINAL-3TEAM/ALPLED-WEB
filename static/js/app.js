@@ -133,6 +133,7 @@
   let docJobPollTimer = null;
   let docJobElapsedTimer = null;
   let docJobElapsedSeconds = 0;
+  let docJobElapsedStartedAtMs = null;
 
   function setConfirmTone(button, tone) {
     if (!button) return;
@@ -267,9 +268,11 @@
   }
 
   function clearDocJobElapsedTimer() {
-    if (!docJobElapsedTimer) return;
-    window.clearInterval(docJobElapsedTimer);
-    docJobElapsedTimer = null;
+    if (docJobElapsedTimer) {
+      window.clearInterval(docJobElapsedTimer);
+      docJobElapsedTimer = null;
+    }
+    docJobElapsedStartedAtMs = null;
   }
 
   function formatElapsedTime(totalSeconds) {
@@ -306,14 +309,45 @@
     return Math.max(Number.parseInt(payload.elapsed_seconds ?? fallbackSeconds ?? 0, 10) || 0, 0);
   }
 
-  function startElapsedTimer(initialSeconds = 0) {
-    clearDocJobElapsedTimer();
-    docJobElapsedSeconds = Math.max(Number.parseInt(initialSeconds || 0, 10) || 0, 0);
+  function resolveStartedAtMs(payload = {}) {
+    const startedAt = Date.parse(payload.started_at || "");
+    return Number.isNaN(startedAt) ? null : startedAt;
+  }
+
+  function renderCurrentElapsedTime() {
+    if (docJobElapsedStartedAtMs !== null) {
+      renderElapsedTime(Math.max(Math.floor((Date.now() - docJobElapsedStartedAtMs) / 1000), 0));
+      return;
+    }
     renderElapsedTime(docJobElapsedSeconds);
+  }
+
+  function startElapsedTimer(initialSeconds = 0, startedAtMs = null) {
+    clearDocJobElapsedTimer();
+    docJobElapsedStartedAtMs = Number.isFinite(startedAtMs) ? startedAtMs : null;
+    docJobElapsedSeconds = Math.max(Number.parseInt(initialSeconds || 0, 10) || 0, 0);
+    renderCurrentElapsedTime();
     docJobElapsedTimer = window.setInterval(() => {
-      docJobElapsedSeconds += 1;
-      renderElapsedTime(docJobElapsedSeconds);
+      if (docJobElapsedStartedAtMs === null) {
+        docJobElapsedSeconds += 1;
+      }
+      renderCurrentElapsedTime();
     }, 1000);
+  }
+
+  function syncElapsedTimer(payload = {}, fallbackSeconds = 0) {
+    const startedAtMs = resolveStartedAtMs(payload);
+    if (startedAtMs !== null) {
+      if (docJobElapsedTimer && docJobElapsedStartedAtMs === startedAtMs) {
+        renderCurrentElapsedTime();
+        return;
+      }
+      startElapsedTimer(0, startedAtMs);
+      return;
+    }
+    if (!docJobElapsedTimer) {
+      startElapsedTimer(resolveElapsedSeconds(payload, fallbackSeconds));
+    }
   }
 
   function updateJobProgress({ title, message }) {
@@ -471,6 +505,22 @@
     }
   }
 
+  function restoreDocJobCtaForms() {
+    let restored = false;
+    document.querySelectorAll("[data-doc-job-inline]").forEach((root) => {
+      const formNode = root.querySelector("[data-doc-job-form]");
+      const noticeNode = root.querySelector("[data-doc-job-cta-notice]");
+      if (formNode) {
+        formNode.classList.remove("hidden");
+        restored = true;
+      }
+      if (noticeNode) {
+        noticeNode.classList.add("hidden");
+      }
+    });
+    return restored;
+  }
+
   function resolveFormSubmitUrl(form, fallbackUrl = window.location.href) {
     if (!form) return fallbackUrl;
 
@@ -518,7 +568,7 @@
         title: payload.title || title,
         message: payload.message || "작업을 처리하고 있습니다.",
       });
-      startElapsedTimer(resolveElapsedSeconds(payload, fallbackElapsedSeconds));
+      syncElapsedTimer(payload, fallbackElapsedSeconds);
 
       if (payload.status === "running") {
         clearDocJobPollTimer();
@@ -541,8 +591,12 @@
       if (payload.status === "failed") {
         clearDocJobPollTimer();
         clearDocJobElapsedTimer();
+        const restored = restoreDocJobCtaForms();
         const failureDetails = [payload.message, payload.error_cd, payload.error_msg].filter(Boolean).join("\n");
         showAppAlert(failureDetails || "문서 작업을 완료하지 못했습니다.", "error");
+        if (!restored) {
+          window.location.reload();
+        }
         return;
       }
 
@@ -594,7 +648,7 @@
         title: payload.title || fallbackTitle,
         message: payload.message || "요청을 처리하고 있습니다.",
       });
-      startElapsedTimer(resolveElapsedSeconds(payload, 0));
+      syncElapsedTimer(payload, 0);
 
       if (payload.status === "completed") {
         window.location.reload();
@@ -631,10 +685,10 @@
       job_status_code: pageState.dataset.jobStatusCode || "PRGRS_PENDING",
       job_status_label: pageState.dataset.jobStatusLabel || "생성 대기",
     });
-    startElapsedTimer(resolveElapsedSeconds({
+    syncElapsedTimer({
       started_at: pageState.dataset.jobStartedAt || "",
       elapsed_seconds: pageState.dataset.jobElapsedSeconds || "0",
-    }));
+    });
     pollDocJob(pageState.dataset.pollUrl, {
       title: pageState.dataset.jobTitle || "문서 작업 진행 중",
       pollIntervalMs: Number.parseInt(pageState.dataset.pollIntervalMs || "10000", 10) || 10000,
