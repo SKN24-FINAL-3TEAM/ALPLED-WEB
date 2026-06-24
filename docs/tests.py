@@ -614,7 +614,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertContains(response, f'action="{reverse("doc_generate")}"', html=False)
         self.assertContains(response, f'data-submit-url="{reverse("doc_generate")}"', html=False)
         self.assertContains(response, 'data-doc-job-inline', html=False)
-        self.assertContains(response, 'data-doc-job-cta-inline', html=False)
+        self.assertContains(response, 'data-doc-job-inline-elapsed-wrap', html=False)
         self.assertNotContains(response, 'data-doc-job-cta-notice', html=False)
         self.assertContains(response, "작업 상태를 확인하고 있습니다.")
 
@@ -746,11 +746,30 @@ class DocumentWorkflowViewTests(TestCase):
                 self.assertContains(response, "문서를 생성 중입니다.")
                 self.assertContains(response, "Elapsed")
                 self.assertContains(response, 'data-doc-job-inline', html=False)
-                self.assertContains(response, 'data-doc-job-cta-inline', html=False)
-                self.assertContains(response, 'data-doc-job-cta-inline-elapsed', html=False)
+                self.assertContains(response, 'data-doc-job-inline-elapsed', html=False)
                 self.assertNotContains(response, 'data-doc-job-cta-notice', html=False)
                 self.assertNotContains(response, 'data-doc-job-cta-root', html=False)
-                self.assertNotContains(response, 'data-doc-job-form', html=False)
+                self.assertContains(response, 'data-doc-job-form', html=False)
+                self.assertContains(response, 'class="inline-flex hidden"', html=False)
+
+    def test_doc_generate_hides_elapsed_for_pending_generation_job(self):
+        project_file = self._create_project_file()
+        self._set_generation_state(selected_file_ids=[project_file.sn])
+        self._create_generation_job(
+            sn=220,
+            job_id="job-srs-pending-notice",
+            document=None,
+            document_type=self.srs_code,
+            job_status=self.progress_pending,
+        )
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_SRS", "resume": 1})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "문서 생성 대기 중입니다.")
+        self.assertContains(response, 'data-doc-job-inline-elapsed-wrap class="hidden shrink-0', html=False)
+        self.assertContains(response, 'data-doc-job-form', html=False)
+        self.assertContains(response, 'class="inline-flex hidden"', html=False)
 
     def test_doc_generate_restores_start_button_after_failed_generation_job(self):
         project_file = self._create_project_file()
@@ -1226,6 +1245,30 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["status"], "running")
         self.assertEqual(payload["job_id"], "job-snapshot-only")
         self.assertEqual(payload["job_status_code"], "PRGRS_PENDING")
+
+    def test_document_job_status_uses_pending_message_for_waiting_generation_job(self):
+        job = self._create_generation_job(
+            sn=42,
+            job_id="job-srs-pending-message",
+            document_type=self.srs_code,
+            job_status=self.progress_pending,
+        )
+
+        response = self.client.get(
+            reverse("doc_job_status"),
+            {
+                "job_kind": "initial",
+                "docs_cd": "DOC_SRS",
+                "job_id": job.job_id,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "running")
+        self.assertEqual(payload["job_status_code"], "PRGRS_PENDING")
+        self.assertEqual(payload["message"], "문서 생성 대기 중입니다.")
 
     def test_document_job_status_clears_snapshot_after_completed_job(self):
         self._set_doc_job_snapshot(

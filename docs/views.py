@@ -386,7 +386,9 @@ def _build_job_status_url(job_kind, document_code, job_id=None, tracking_documen
 def _get_job_timing(job):
     if job is None:
         return "", 0
-    reference_dt = getattr(job, "started_at", None) or getattr(job, "requested_at", None)
+    reference_dt = getattr(job, "started_at", None)
+    if reference_dt is None and getattr(job, "job_status_id", "") != PROGRESS_PROCESSING:
+        reference_dt = getattr(job, "requested_at", None)
     if reference_dt is None:
         return "", 0
     started_at = timezone.localtime(reference_dt)
@@ -513,11 +515,30 @@ def _serialize_job_status(request, current_project, document_code, job_kind, job
                 status="failed",
             )
 
-    if job.job_status_id in {PROGRESS_PENDING, PROGRESS_PROCESSING}:
+    if job.job_status_id == PROGRESS_PENDING:
+        pending_message = (
+            "문서 생성 대기 중입니다."
+            if job_kind == GENERATION_JOB_KIND_INITIAL
+            else "회의 내용 자동 적용 대기 중입니다."
+        )
         return _build_generation_job_response(
             job_kind,
             document_code,
-            "문서를 생성 중입니다.",
+            pending_message,
+            job,
+            status="running",
+        )
+
+    if job.job_status_id == PROGRESS_PROCESSING:
+        processing_message = (
+            "문서를 생성 중입니다."
+            if job_kind == GENERATION_JOB_KIND_INITIAL
+            else "회의 내용을 자동 적용 중입니다."
+        )
+        return _build_generation_job_response(
+            job_kind,
+            document_code,
+            processing_message,
             job,
             status="running",
         )

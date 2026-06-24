@@ -251,24 +251,8 @@
     return document.querySelector("[data-doc-job-inline-elapsed]");
   }
 
-  function getDocJobCtaInlineRoot() {
-    return document.querySelector("[data-doc-job-cta-inline]");
-  }
-
-  function getDocJobCtaInlineTitle() {
-    return document.querySelector("[data-doc-job-cta-inline-title]");
-  }
-
-  function getDocJobCtaInlineMessage() {
-    return document.querySelector("[data-doc-job-cta-inline-message]");
-  }
-
-  function getDocJobCtaInlineBadge() {
-    return document.querySelector("[data-doc-job-cta-inline-badge]");
-  }
-
-  function getDocJobCtaInlineElapsed() {
-    return document.querySelector("[data-doc-job-cta-inline-elapsed]");
+  function getDocJobStatusInlineElapsedWrap() {
+    return document.querySelector("[data-doc-job-inline-elapsed-wrap]");
   }
 
   function getDocJobCtaSlot(form = null) {
@@ -318,10 +302,6 @@
     const statusInlineElapsedNode = getDocJobStatusInlineElapsed();
     if (statusInlineElapsedNode) {
       statusInlineElapsedNode.textContent = formatted;
-    }
-    const ctaInlineElapsedNode = getDocJobCtaInlineElapsed();
-    if (ctaInlineElapsedNode) {
-      ctaInlineElapsedNode.textContent = formatted;
     }
   }
 
@@ -463,6 +443,20 @@
     return "shrink-0 whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800";
   }
 
+  function resolveDocJobInlineMessage(payload = {}) {
+    const statusCode = resolveJobStatusCode(payload);
+    if (statusCode === "PRGRS_PENDING" && payload.job_kind === "initial") {
+      return "문서 생성 대기 중입니다.";
+    }
+    return payload.message || "작업 상태를 확인하고 있습니다.";
+  }
+
+  function syncDocJobInlineElapsed(statusCode) {
+    const elapsedWrapNode = getDocJobStatusInlineElapsedWrap();
+    if (!elapsedWrapNode) return;
+    elapsedWrapNode.classList.toggle("hidden", statusCode !== "PRGRS_PROCESSING");
+  }
+
   function updateDocJobInline(payload = {}) {
     const root = getDocJobStatusInlineRoot();
     if (!root) return;
@@ -478,35 +472,13 @@
       titleNode.textContent = payload.title || "문서 작업 상태";
     }
     if (messageNode) {
-      messageNode.textContent = payload.message || "작업 상태를 확인하고 있습니다.";
+      messageNode.textContent = resolveDocJobInlineMessage(payload);
     }
     if (badgeNode) {
       badgeNode.className = getInlineBadgeClass(statusCode);
       badgeNode.textContent = statusLabel;
     }
-  }
-
-  function updateDocJobCtaInline(payload = {}) {
-    const root = getDocJobCtaInlineRoot();
-    if (!root) return;
-
-    const statusCode = resolveJobStatusCode(payload);
-    const statusLabel = resolveJobStatusLabel(payload);
-    const titleNode = getDocJobCtaInlineTitle();
-    const messageNode = getDocJobCtaInlineMessage();
-    const badgeNode = getDocJobCtaInlineBadge();
-
-    root.classList.remove("hidden");
-    if (titleNode) {
-      titleNode.textContent = payload.title || "문서 작업 상태";
-    }
-    if (messageNode) {
-      messageNode.textContent = payload.message || "작업 상태를 확인하고 있습니다.";
-    }
-    if (badgeNode) {
-      badgeNode.className = getInlineBadgeClass(statusCode);
-      badgeNode.textContent = statusLabel;
-    }
+    syncDocJobInlineElapsed(statusCode);
   }
 
   function updateDocProgressBadge(payload = {}) {
@@ -519,34 +491,28 @@
 
   function updateDocJobUi(payload = {}) {
     updateDocJobInline(payload);
-    updateDocJobCtaInline(payload);
     updateDocProgressBadge(payload);
   }
 
-  function showDocJobCtaInline(form, payload = {}) {
+  function showDocJobCtaInline(form) {
     const root = getDocJobCtaSlot(form);
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
-    const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
     if (formNode) {
       formNode.classList.add("hidden");
     }
-    if (inlineNode) {
-      inlineNode.classList.remove("hidden");
-    }
-    updateDocJobCtaInline(payload);
   }
 
   function restoreDocJobCtaForm(form) {
     const root = getDocJobCtaSlot(form);
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
-    const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
+    const statusInlineRoot = getDocJobStatusInlineRoot();
     if (formNode) {
       formNode.classList.remove("hidden");
     }
-    if (inlineNode) {
-      inlineNode.classList.add("hidden");
+    if (statusInlineRoot) {
+      statusInlineRoot.classList.add("hidden");
     }
   }
 
@@ -554,15 +520,15 @@
     let restored = false;
     document.querySelectorAll("[data-doc-job-cta-slot]").forEach((root) => {
       const formNode = root.querySelector("[data-doc-job-form]");
-      const inlineNode = root.querySelector("[data-doc-job-cta-inline]");
       if (formNode) {
         formNode.classList.remove("hidden");
         restored = true;
       }
-      if (inlineNode) {
-        inlineNode.classList.add("hidden");
-      }
     });
+    const statusInlineRoot = getDocJobStatusInlineRoot();
+    if (statusInlineRoot) {
+      statusInlineRoot.classList.add("hidden");
+    }
     return restored;
   }
 
@@ -669,6 +635,7 @@
     updateDocJobUi({
       title: fallbackTitle,
       message: "요청을 전송하고 있습니다.",
+      job_kind: form.dataset.jobKind || "",
       job_status_code: "PRGRS_PENDING",
       job_status_label: "생성 대기",
     });
@@ -700,7 +667,7 @@
         return;
       }
 
-      showDocJobCtaInline(form, payload);
+      showDocJobCtaInline(form);
 
       await pollDocJob(payload.poll_url, {
         title: payload.title || fallbackTitle,
@@ -727,6 +694,7 @@
       docs_cd: pageState.dataset.docsCd,
       title: pageState.dataset.jobTitle || "문서 작업 진행 중",
       message: pageState.dataset.jobMessage || "작업을 처리하고 있습니다.",
+      job_kind: pageState.dataset.jobKind || "",
       job_status_code: pageState.dataset.jobStatusCode || "PRGRS_PENDING",
       job_status_label: pageState.dataset.jobStatusLabel || "생성 대기",
     });
