@@ -77,6 +77,7 @@
               data-user-position="{{ user.position|default:'' }}"
               data-user-use-yn="{{ user.use_yn }}"
               data-user-temp-password-yn="{{ user.tmpr_pswd_yn|default:'N' }}"
+              data-user-created-at="{{ user.created_at|date:'Y-m-d H:i:s' }}"
               data-user-project-roles="{{ user.project_role_json|default:'[]'|escape }}"
               class="cursor-pointer bg-white transition hover:bg-slate-50">
               <td class="px-6 py-4 text-center font-medium text-slate-900">{{ user.user_id }}</td>

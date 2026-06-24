@@ -41,17 +41,12 @@
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">등록일자</label>
-    <input type="text" value="{{ selected_user.created_at|default:'YYYY-MM-DD HH24:MI:SS' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
+    <input id="user-detail-created-at" type="text" value="{{ selected_user.created_at|date:'Y-m-d H:i:s' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
   </div>
 
   <div class="space-y-2">
     <label class="block text-sm font-medium text-slate-900">임시 비밀번호 여부</label>
     <input id="user-detail-temp-password-yn" type="text" value="{{ selected_user.tmpr_pswd_yn|default:'N' }}" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
-  </div>
-
-  <div class="space-y-2">
-    <label class="block text-sm font-medium text-slate-900">마지막 로그인 일자</label>
-    <input type="text" value="YYYY-MM-DD HH24:MI:SS" readonly class="w-full rounded-lg border border-slate-200 bg-slate-100 px-4 py-2.5 text-sm text-slate-900">
   </div>
 </div>
 

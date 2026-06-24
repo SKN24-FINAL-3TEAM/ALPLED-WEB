@@ -1,3 +1,4 @@
+from django.template.defaultfilters import date as django_date
 from django.test import TestCase
 from django.urls import reverse
 
@@ -378,6 +379,17 @@ class UserViewTests(TestCase):
         self.assertContains(response, 'name="action" value="update_user"', html=False)
         self.assertContains(response, 'name="action" value="delete_user"', html=False)
         self.assertContains(response, "data-confirm-form", html=False)
+
+    def test_user_list_detail_modal_formats_created_at_and_hides_last_login(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("user_list"))
+
+        expected_created_at = django_date(self.admin.created_at, "Y-m-d H:i:s")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'value="{expected_created_at}"', html=False)
+        self.assertContains(response, f'data-user-created-at="{expected_created_at}"', html=False)
+        self.assertNotContains(response, "마지막 로그인 일자")
 
     def test_user_create_form_uses_server_styled_validation_messages(self):
         self.client.force_login(self.admin)

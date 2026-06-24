@@ -765,6 +765,7 @@
     setValue("#user-detail-position", row.dataset.userPosition);
     setValue("#user-detail-active", row.dataset.userUseYn);
     setValue("#user-detail-temp-password-yn", row.dataset.userTempPasswordYn);
+    setValue("#user-detail-created-at", row.dataset.userCreatedAt);
     renderUserProjectRoles(modal, parseUserProjectRoles(row));
   }
 
