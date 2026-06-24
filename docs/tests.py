@@ -610,7 +610,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f'action="{reverse("doc_generate")}"', html=False)
         self.assertContains(response, f'data-submit-url="{reverse("doc_generate")}"', html=False)
-        self.assertContains(response, 'data-doc-job-cta-root', html=False)
+        self.assertContains(response, 'data-doc-job-inline', html=False)
         self.assertContains(response, 'data-doc-job-cta-notice', html=False)
         self.assertContains(response, "산출물을 생성중입니다.")
 
@@ -739,7 +739,7 @@ class DocumentWorkflowViewTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, "산출물을 생성중입니다.")
                 self.assertContains(response, "경과 시간")
-                self.assertContains(response, 'data-doc-job-cta-root', html=False)
+                self.assertContains(response, 'data-doc-job-inline', html=False)
                 self.assertContains(response, 'data-doc-job-cta-elapsed', html=False)
                 self.assertNotContains(response, 'data-doc-job-form', html=False)
 

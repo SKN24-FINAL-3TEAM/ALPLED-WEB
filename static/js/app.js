@@ -442,7 +442,7 @@
   }
 
   function showDocJobCtaNotice(form, payload = {}) {
-    const root = form?.closest("[data-doc-job-cta-root]");
+    const root = form?.closest("[data-doc-job-inline]");
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
     const noticeNode = root.querySelector("[data-doc-job-cta-notice]");
@@ -459,7 +459,7 @@
   }
 
   function restoreDocJobCtaForm(form) {
-    const root = form?.closest("[data-doc-job-cta-root]");
+    const root = form?.closest("[data-doc-job-inline]");
     if (!root) return;
     const formNode = root.querySelector("[data-doc-job-form]");
     const noticeNode = root.querySelector("[data-doc-job-cta-notice]");

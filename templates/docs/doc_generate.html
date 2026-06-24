@@ -314,7 +314,7 @@
         {% endif %}
 
         {% if active_job and active_job.job_kind == "initial" and selected_is_current_step %}
-          <div class="pl-1" data-doc-job-cta-root>
+          <div class="pl-1" data-doc-job-inline>
             <div class="inline-flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-800 shadow-sm" data-doc-job-cta-notice>
               <span data-doc-job-cta-message>산출물을 생성중입니다.</span>
               <span class="rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -323,7 +323,7 @@
             </div>
           </div>
         {% elif can_start_current_generation %}
-          <div class="pl-1" data-doc-job-cta-root>
+          <div class="pl-1" data-doc-job-inline>
             <form method="post" action="{% url 'doc_generate' %}" class="inline-flex" data-doc-job-form data-job-kind="initial" data-submit-url="{% url 'doc_generate' %}">
               {% csrf_token %}
               {% for selected_file in selected_files %}
