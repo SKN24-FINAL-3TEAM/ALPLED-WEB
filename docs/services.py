@@ -640,19 +640,24 @@ def is_working_document(document):
     return str(getattr(document, "version", "") or "") in WORKING_DOCUMENT_VERSIONS
 
 
-def get_generation_saved_document(project, document_code, state=None):
-    confirmed_document = (
-        _exclude_working_versions(
-            Document.objects.filter(
-                project=project,
-                document_type_id=document_code,
-                progress_status_id=PROGRESS_COMPLETED,
-            )
+def _generation_completed_initial_queryset(project, document_code):
+    return (
+        Document.objects.filter(
+            project=project,
+            document_type_id=document_code,
+            progress_status_id=PROGRESS_COMPLETED,
+            version="0",
         )
         .select_related("project", "document_type", "created_by", "updated_by", "possession_user")
         .order_by("-updated_at", "-created_at", "-sn")
-        .first()
     )
+
+
+def get_generation_saved_document(project, document_code, state=None):
+    if project is None:
+        return None
+
+    confirmed_document = _generation_completed_initial_queryset(project, document_code).first()
     if state:
         document_sn = (state.get("confirmed_documents", {}) or {}).get(document_code) or (
             state.get("confirmed_documents", {}) or {}
@@ -668,9 +673,10 @@ def get_generation_saved_document(project, document_code, state=None):
                 .first()
             )
             if document is not None:
-                if is_working_document(document) and confirmed_document is not None:
+                if document.progress_status_id == PROGRESS_COMPLETED and str(document.version or "") == "0":
+                    return document
+                if confirmed_document is not None:
                     return confirmed_document
-                return document
 
     return confirmed_document
 
@@ -1574,6 +1580,9 @@ def hydrate_generation_state_from_existing_documents(project, state):
             confirmed_document = get_generation_saved_document(project, code, state)
             if confirmed_document is not None:
                 confirmed[str(code)] = confirmed_document.sn
+            else:
+                confirmed.pop(str(code), None)
+                confirmed.pop(code, None)
             continue
         if str(code) in draft_documents:
             continue
