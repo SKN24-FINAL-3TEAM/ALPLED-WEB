@@ -75,8 +75,10 @@
                 {% endif %}
               </div>
             {% else %}
-              현재 생성 단계는 <span class="font-semibold text-slate-900">{{ current_document_label }}</span>입니다.
-              {{ selected_document_label }} 입력 화면은 해당 산출물 생성 단계가 되었을 때 표시됩니다.
+              {{ selected_document_label }} 생성을 위해 필요한 선행 산출물이 아직 준비되지 않았습니다.
+              {% if selected_progress_row.missing_prerequisite_labels %}
+                먼저 <span class="font-semibold text-slate-900">{{ selected_progress_row.missing_prerequisite_labels|join:", " }}</span> 저장본을 준비해 주세요.
+              {% endif %}
             {% endif %}
           </div>
         {% elif show_file_selector %}
@@ -306,8 +308,8 @@
           {% endif %}
         {% else %}
           <div class="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 text-slate-700 shadow-sm">
-            {{ selected_document_label }}은 별도 파일 업로드나 구성요소 입력 없이 직전 단계의 저장 완료 산출물을 기준으로 생성됩니다.
-            아래의 생성 버튼을 눌러 다음 산출물 생성을 진행해 주세요.
+            {{ selected_document_label }}은 별도 파일 업로드나 구성요소 입력 없이 필요한 선행 산출물 저장본을 기준으로 생성됩니다.
+            아래의 생성 버튼을 눌러 산출물 생성을 진행해 주세요.
           </div>
         {% endif %}
 

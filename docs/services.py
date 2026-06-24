@@ -31,6 +31,14 @@ from .models import ApprovalReviewJob, Document, DocumentApproval, DocumentDetai
 DOCUMENT_CODE_SEQUENCE = ("DOC_SRS", "DOC_ITF", "DOC_ARCH", "DOC_ERD", "DOC_DB", "DOC_TS")
 FILE_INPUT_DOCUMENT_CODES = {"DOC_SRS"}
 DERIVED_DOCUMENT_CODES = {"DOC_ERD", "DOC_DB", "DOC_TS"}
+DOCUMENT_PREREQUISITES = {
+    "DOC_SRS": (),
+    "DOC_ITF": ("DOC_SRS",),
+    "DOC_ARCH": ("DOC_SRS",),
+    "DOC_ERD": ("DOC_SRS",),
+    "DOC_DB": ("DOC_SRS", "DOC_ERD"),
+    "DOC_TS": ("DOC_SRS", "DOC_ITF"),
+}
 
 APPROVAL_STATUS_SEQUENCE = ("APRV_REQ", "APRV_COM", "APRV_RJT")
 PROJECT_ROLE_CODES = ("ROLE_MANAGER", "ROLE_MEMBER")
@@ -419,6 +427,10 @@ def get_document_codes_before(document_code):
     except ValueError:
         return []
     return sequence[:index]
+
+
+def get_document_prerequisite_codes(document_code):
+    return tuple(DOCUMENT_PREREQUISITES.get(document_code, ()))
 
 
 def get_actor(request):
@@ -895,7 +907,7 @@ def build_generation_request_payload(project, state, document_code, *, update_mo
         files = selected_files if selected_files is not None else get_generation_selected_files(project, state)
     else:
         # DOC_ITF는 image_list, DOC_ARCH는 tbl_project_net, DOC_ERD/DOC_DB/DOC_TS는
-        # DB에 저장된 이전 확정 산출물을 FastAPI가 project_sn으로 조회하는 구조입니다.
+        # project_sn으로 필요한 선행 산출물을 FastAPI가 조회하는 구조입니다.
         files = []
     return {
         "project_sn": project.sn,
@@ -1073,7 +1085,7 @@ def _document_job_queryset(project, document_code, *, initial_only=False):
 def get_generation_draft_document(project, state, document_code=None):
     if project is None:
         return None
-    target_code = document_code or get_current_generation_code(state)
+    target_code = document_code or get_current_generation_code(state, project)
     if not target_code:
         return None
     target_sn = state.get("draft_documents", {}).get(target_code)
@@ -1098,8 +1110,8 @@ def clear_generation_draft_document(state, document_code):
     return state
 
 
-def start_initial_generation_job(project, actor, state):
-    document_code = get_current_generation_code(state)
+def start_initial_generation_job(project, actor, state, document_code=None):
+    document_code = get_current_generation_code(state, project, preferred_code=document_code)
     _debug_generation_log(
         "start_initial_generation_job_enter",
         project_sn=getattr(project, "sn", None),
@@ -1257,7 +1269,7 @@ def build_generation_lines(project, document_code, inputs):
     elif document_code in DERIVED_DOCUMENT_CODES:
         rows = [
             f"{project.name} 프로젝트의 {label} 초안입니다.",
-            "직전 단계의 저장 완료 산출물을 기준으로 더미 자동 생성 결과를 구성했습니다.",
+            "필요한 선행 산출물 저장본을 기준으로 더미 자동 생성 결과를 구성했습니다.",
         ]
         for previous_document in inputs:
             rows.append(f"- {get_document_label(previous_document.document_type_id)} v{previous_document.version}")
@@ -1269,10 +1281,11 @@ def build_generation_lines(project, document_code, inputs):
         for project_file in inputs:
             rows.append(f"- {project_file.name} ({project_file.file_type.name})")
 
-    previous_document_code = get_previous_document_code(document_code)
-    if previous_document_code:
+    prerequisite_codes = get_document_prerequisite_codes(document_code)
+    if prerequisite_codes:
+        prerequisite_labels = ", ".join(get_document_label(code) for code in prerequisite_codes)
         rows.append(
-            f"이 문서는 직전 단계인 {get_document_label(previous_document_code)} 저장본을 이어받아 작성됩니다."
+            f"이 문서는 선행 산출물인 {prerequisite_labels} 저장본을 기준으로 작성됩니다."
         )
     rows.append("내용을 검토한 뒤 OnlyOffice에서 수정하고 저장하기를 진행해 주세요.")
     return rows
@@ -1563,11 +1576,11 @@ def hydrate_generation_state_from_existing_documents(project, state):
                 confirmed[str(code)] = confirmed_document.sn
             continue
         if str(code) in draft_documents:
-            break
+            continue
 
         confirmed_document = get_generation_saved_document(project, code, state)
         if confirmed_document is None:
-            break
+            continue
         confirmed[str(code)] = confirmed_document.sn
 
     return state
@@ -1646,41 +1659,61 @@ def get_generation_source_inputs(project, state, document_code):
     if document_code in FILE_INPUT_DOCUMENT_CODES:
         return get_generation_selected_files(project, state)
     if document_code in DERIVED_DOCUMENT_CODES:
-        previous_code = get_previous_document_code(document_code)
-        previous_document = get_generation_saved_document(project, previous_code, state) if previous_code else None
-        return [previous_document] if previous_document is not None else []
+        source_documents = []
+        for prerequisite_code in get_document_prerequisite_codes(document_code):
+            prerequisite_document = get_generation_saved_document(project, prerequisite_code, state)
+            if prerequisite_document is not None:
+                source_documents.append(prerequisite_document)
+        return source_documents
     return get_generation_selected_files(project, state)
 
 
 def get_generation_prerequisite_error(project, state, document_code):
+    missing_prerequisite_labels = get_missing_generation_prerequisite_labels(project, state, document_code)
+    if missing_prerequisite_labels:
+        return f"선행 산출물({', '.join(missing_prerequisite_labels)}) 저장본이 필요합니다."
     if document_code == INTERFACE_REFERENCE_DOCUMENT_CODE and not get_generation_itf_references(state):
         return "사용자 인터페이스 참고 이미지를 하나 이상 업로드해 주세요."
     if document_code == ARCHITECTURE_DOCUMENT_CODE and not get_project_nets(project):
         return "아키텍처 구성요소를 하나 이상 추가해 주세요."
     if document_code in FILE_INPUT_DOCUMENT_CODES and not get_generation_selected_files(project, state):
         return "생성에 사용할 문서를 먼저 선택해 주세요."
-    if document_code in DERIVED_DOCUMENT_CODES:
-        previous_code = get_previous_document_code(document_code)
-        if previous_code and get_generation_saved_document(project, previous_code, state) is None:
-            return f"직전 단계인 {get_document_label(previous_code)} 저장본이 필요합니다."
     return None
 
 
-def get_current_generation_code(state):
+def get_missing_generation_prerequisite_labels(project, state, document_code):
+    return [
+        get_document_label(prerequisite_code)
+        for prerequisite_code in get_document_prerequisite_codes(document_code)
+        if get_generation_saved_document(project, prerequisite_code, state) is None
+    ]
+
+
+def is_generation_dependency_ready(project, state, document_code):
+    return not get_missing_generation_prerequisite_labels(project, state, document_code)
+
+
+def get_current_generation_code(state, project=None, preferred_code=None):
     confirmed = state.get("confirmed_documents", {})
+    draft_documents = state.get("draft_documents", {})
+    if preferred_code and str(preferred_code) not in confirmed and str(preferred_code) not in draft_documents:
+        if project is None or is_generation_dependency_ready(project, state, preferred_code):
+            return preferred_code
     for code in get_document_code_sequence():
-        if str(code) not in confirmed:
+        if str(code) in confirmed or str(code) in draft_documents:
+            continue
+        if project is None or is_generation_dependency_ready(project, state, code):
             return code
     return None
 
 
 def is_generation_complete(state):
-    return get_current_generation_code(state) is None
+    confirmed = state.get("confirmed_documents", {}) or {}
+    return all(str(code) in confirmed for code in get_document_code_sequence())
 
 
 def get_generation_progress_rows(state, project=None):
     rows = []
-    current_code = get_current_generation_code(state)
     confirmed_documents = state.get("confirmed_documents", {}) or {}
     draft_documents = state.get("draft_documents", {}) or {}
 
@@ -1689,6 +1722,10 @@ def get_generation_progress_rows(state, project=None):
         detail_url = ""
         download_url = ""
         job_status_code = ""
+        prerequisite_codes = get_document_prerequisite_codes(code)
+        prerequisite_labels = [get_document_label(prerequisite_code) for prerequisite_code in prerequisite_codes]
+        missing_prerequisite_labels = get_missing_generation_prerequisite_labels(project, state, code)
+        dependency_ready = project is None or not missing_prerequisite_labels
 
         if code in confirmed_documents or str(code) in confirmed_documents:
             status = "confirmed"
@@ -1715,24 +1752,24 @@ def get_generation_progress_rows(state, project=None):
                 status = "failed"
                 status_label = latest_job_label or "생성 실패"
                 job_status_code = latest_job_status
-            elif latest_job_status == PROGRESS_PENDING and current_code == code:
+            elif latest_job_status == PROGRESS_PENDING and dependency_ready:
                 status = "pending"
                 status_label = latest_job_label or "생성 대기"
                 job_status_code = latest_job_status
-            elif current_code == code:
+            elif dependency_ready:
                 status = "pending"
                 status_label = "생성 대기"
                 job_status_code = PROGRESS_PENDING
             else:
                 status = "locked"
-                status_label = "이전 단계 대기"
-        elif current_code == code:
+                status_label = "선행 산출물 대기"
+        elif dependency_ready:
             status = "pending"
             status_label = "생성 대기"
             job_status_code = PROGRESS_PENDING
         else:
             status = "locked"
-            status_label = "이전 단계 대기"
+            status_label = "선행 산출물 대기"
 
         rows.append(
             {
@@ -1744,13 +1781,15 @@ def get_generation_progress_rows(state, project=None):
                 "document_sn": document_sn,
                 "detail_url": detail_url,
                 "download_url": download_url,
+                "prerequisite_labels": prerequisite_labels,
+                "missing_prerequisite_labels": missing_prerequisite_labels,
             }
         )
     return rows
 
 
 def ensure_generation_draft(project, actor, state):
-    document_code = get_current_generation_code(state)
+    document_code = get_current_generation_code(state, project)
     if not document_code:
         return None, False
 

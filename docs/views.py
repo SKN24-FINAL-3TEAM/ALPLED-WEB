@@ -197,7 +197,7 @@ def _build_generation_step_guide(document_code):
         "DOC_ITF": {
             "title": "화면 설계서(사용자 인터페이스 설계서) 생성",
             "description": "화면 설계서 생성을 위해 화면 UI 이미지 또는 와이어프레임 이미지를 업로드해 주세요.",
-            "help": "업로드된 이미지는 FastAPI 생성 요청의 image_list로 전달되며, 아키텍처 단계로 넘어가기 전에 최소 1개 이상 필요합니다.",
+            "help": "사용자 요구사항 정의서 저장본을 기준으로, 업로드된 이미지를 FastAPI 생성 요청의 image_list로 전달합니다.",
         },
         "DOC_ARCH": {
             "title": "아키텍처 설계서 생성",
@@ -206,18 +206,18 @@ def _build_generation_step_guide(document_code):
         },
         "DOC_ERD": {
             "title": "ERD 생성",
-            "description": "ERD 생성을 위해 이전 단계에서 확정된 요구사항과 인터페이스·아키텍처 산출물을 기준으로 데이터 구조를 도출합니다.",
-            "help": "별도 입력값이 필요한 단계가 아니라, 앞 단계 확정 산출물을 기반으로 생성됩니다.",
+            "description": "엔티티 관계 모형 설계서 생성을 위해 사용자 요구사항 정의서 저장본을 기준으로 데이터 구조를 도출합니다.",
+            "help": "사용자 인터페이스 설계서나 아키텍처 설계서 생성 여부와 관계없이 요구사항 저장본이 있으면 생성할 수 있습니다.",
         },
         "DOC_DB": {
             "title": "DB 설계서 생성",
             "description": "DB 설계서 생성을 위해 확정된 ERD와 요구사항을 기준으로 테이블, 컬럼, 제약조건 정보를 구성합니다.",
-            "help": "별도 구성요소 입력이 필요한 단계가 아니라, 앞 단계 확정 산출물을 기반으로 생성됩니다.",
+            "help": "사용자 요구사항 정의서와 엔티티 관계 모형 설계서 저장본이 필요합니다.",
         },
         "DOC_TS": {
-            "title": "테스트 시나리오 생성",
-            "description": "테스트 시나리오 생성을 위해 확정된 요구사항과 설계 산출물을 기준으로 테스트 항목을 구성합니다.",
-            "help": "기능 흐름, 예외 조건, 검증 기준을 포함한 테스트 시나리오 초안을 생성합니다.",
+            "title": "통합 시험 시나리오 생성",
+            "description": "통합 시험 시나리오 생성을 위해 요구사항과 화면 흐름을 기준으로 테스트 항목을 구성합니다.",
+            "help": "사용자 요구사항 정의서와 사용자 인터페이스 설계서 저장본이 필요합니다.",
         },
     }
     return guides.get(
@@ -257,7 +257,7 @@ def _is_generation_resume_request(request):
 def _get_generation_context(request, current_project, actor, document_code, state=None):
     state = state or get_generation_state(request.session, current_project)
     selected_files = get_generation_selected_files(current_project, state)
-    current_code = get_current_generation_code(state)
+    current_code = get_current_generation_code(state, current_project, preferred_code=document_code)
     current_draft = get_generation_draft_document(current_project, state, current_code)
     if current_draft is not None and current_draft.progress_status_id == PROGRESS_FAILED:
         clear_generation_draft_document(state, current_code)
@@ -267,13 +267,13 @@ def _get_generation_context(request, current_project, actor, document_code, stat
     if request.GET.get("auto_start") == "1" and current_code and current_draft is None:
         prerequisite_error = get_generation_prerequisite_error(current_project, state, current_code)
         if prerequisite_error is None:
-            job_result = start_initial_generation_job(current_project, actor, state)
+            job_result = start_initial_generation_job(current_project, actor, state, document_code=current_code)
             save_generation_state(request.session, state)
             if job_result["status"] in {"started", "running"} and job_result["document"] is not None:
                 messages.success(request, f"{get_document_label(current_code)} 생성을 요청했습니다.")
                 return None, redirect(build_generation_redirect_url(document_code=current_code, play=True, resume=True))
 
-    current_code = get_current_generation_code(state)
+    current_code = get_current_generation_code(state, current_project, preferred_code=document_code)
     current_draft = get_generation_draft_document(current_project, state, current_code)
 
     progress_rows = get_generation_progress_rows(state, current_project)
@@ -789,7 +789,7 @@ def document_generate(request):
     if request.method == "POST":
         state = get_generation_state(request.session, current_project)
         action = request.POST.get("action")
-        current_code = get_current_generation_code(state)
+        current_code = get_current_generation_code(state, current_project, preferred_code=document_code)
 
         if action == "reset_generation":
             target_code = resolve_document_code(request.POST.get("docs_cd") or document_code or current_code)
@@ -864,6 +864,14 @@ def document_generate(request):
                     request.POST.getlist("selected_files") or state.get("selected_file_ids", []),
                 )
 
+            if not current_code:
+                prerequisite_error = get_generation_prerequisite_error(current_project, state, document_code)
+                message = prerequisite_error or "선행 산출물을 먼저 준비해 주세요."
+                if _is_ajax_request(request):
+                    return JsonResponse({"message": message}, status=400)
+                messages.error(request, message)
+                return redirect(_build_generation_redirect(document_code, resume=True))
+
             prerequisite_error = get_generation_prerequisite_error(current_project, state, current_code)
             if prerequisite_error:
                 _debug_generation_log(
@@ -878,12 +886,13 @@ def document_generate(request):
                     return redirect(_build_generation_redirect(document_code, resume=True, modal="files"))
                 return redirect(_build_generation_redirect(document_code, resume=True, arch_form=current_code == ARCHITECTURE_DOCUMENT_CODE))
 
-            job_result = start_initial_generation_job(current_project, actor, state)
+            job_result = start_initial_generation_job(current_project, actor, state, document_code=current_code)
+            job_result_record = job_result.get("job")
             _debug_generation_log(
                 "document_generate_start_current_job_result",
                 current_code=current_code,
                 job_status=job_result.get("status"),
-                job_id=getattr(job_result.get("job"), "job_id", None) or job_result.get("job", {}).get("job_id"),
+                job_id=getattr(job_result_record, "job_id", None),
                 document_sn=getattr(job_result.get("document"), "sn", None),
                 message=job_result.get("message"),
             )
@@ -1114,7 +1123,7 @@ def document_detail(request, document_sn):
     can_view_revision_history = True
 
     generation_state = get_generation_state(request.session, current_project)
-    current_generation_code = get_current_generation_code(generation_state)
+    current_generation_code = get_current_generation_code(generation_state, current_project, preferred_code=document.document_type_id)
     is_generation_draft = (
         is_working_document(document)
         and generation_state.get("draft_documents", {}).get(document.document_type_id) == document.sn
