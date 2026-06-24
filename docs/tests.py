@@ -511,8 +511,28 @@ class DocumentWorkflowViewTests(TestCase):
         progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
         self.assertEqual(progress_by_code["DOC_SRS"]["status"], "confirmed")
         self.assertEqual(progress_by_code["DOC_ITF"]["status"], "pending")
-        self.assertEqual(progress_by_code["DOC_ARCH"]["status"], "locked")
+        self.assertEqual(progress_by_code["DOC_ARCH"]["status"], "pending")
         self.assertFalse(response.context["is_complete"])
+
+    def test_generate_progress_uses_document_dependency_graph(self):
+        approved_srs = self._create_document(sn=1, version="1.0", document_type=self.srs_code)
+        approved_srs.progress_status = self.progress_completed
+        approved_srs.save(update_fields=["progress_status"])
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_ARCH", "resume": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
+        self.assertEqual(progress_by_code["DOC_SRS"]["status"], "confirmed")
+        self.assertEqual(progress_by_code["DOC_ITF"]["status"], "pending")
+        self.assertEqual(progress_by_code["DOC_ARCH"]["status"], "pending")
+        self.assertEqual(progress_by_code["DOC_ERD"]["status"], "pending")
+        self.assertEqual(progress_by_code["DOC_DB"]["status"], "locked")
+        self.assertEqual(progress_by_code["DOC_TS"]["status"], "locked")
+        self.assertEqual(progress_by_code["DOC_DB"]["missing_prerequisite_labels"], ["엔티티 관계 모형 설계서"])
+        self.assertEqual(progress_by_code["DOC_TS"]["missing_prerequisite_labels"], ["사용자 인터페이스 설계서"])
+        self.assertEqual(response.context["selected_document_code"], "DOC_ARCH")
+        self.assertTrue(response.context["selected_is_current_step"])
 
     def test_generate_state_replaces_saved_working_document_with_approved_version(self):
         working_srs = self._create_document(sn=10, version="0", document_type=self.srs_code)
@@ -610,6 +630,7 @@ class DocumentWorkflowViewTests(TestCase):
 
     def test_reset_generation_clears_session_state_and_temp_references(self):
         with self.settings(ALPLED_LOCAL_STORAGE_ROOT=self.temp_dir):
+            self._create_document(sn=1, version="0.0", document_type=self.srs_code)
             self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
             upload = SimpleUploadedFile("screen.png", b"png-bytes", content_type="image/png")
             self.client.post(
@@ -694,6 +715,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertNotIn("DOC_SRS", updated_session["draft_documents"])
 
     def test_itf_start_requires_uploaded_references(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
 
         response = self.client.post(
@@ -706,6 +728,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(response["Location"].startswith(f"{reverse('doc_generate')}?docs_cd=DOC_ITF&resume=1"))
 
     def test_itf_upload_accepts_valid_images_and_rejects_invalid_files(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
         valid = SimpleUploadedFile("screen.png", b"png-bytes", content_type="image/png")
         invalid = SimpleUploadedFile("notes.txt", b"text", content_type="text/plain")
@@ -734,6 +757,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue((self.temp_dir / references[0]["storage_key"]).exists())
 
     def test_itf_upload_appends_references_across_multiple_requests(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
         first = SimpleUploadedFile("screen-1.png", b"png-bytes-1", content_type="image/png")
         second = SimpleUploadedFile("screen-2.jpg", b"jpg-bytes-2", content_type="image/jpeg")
@@ -764,6 +788,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(all(reference["storage_key"].startswith("temp/") for reference in references))
 
     def test_itf_remove_deletes_temp_file_and_session_entry(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
         upload = SimpleUploadedFile("screen.png", b"png-bytes", content_type="image/png")
 
@@ -791,6 +816,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(reference["storage_key"].endswith(".png"))
 
     def test_itf_generation_payload_uses_uploaded_reference_s3_paths(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1})
         upload = SimpleUploadedFile("screen.png", b"png-bytes", content_type="image/png")
 
@@ -809,6 +835,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertIn("/temp/", payload["image_list"][0])
 
     def test_architecture_form_add_creates_project_net_with_requested_mapping(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
 
         response = self.client.post(
@@ -850,6 +877,7 @@ class DocumentWorkflowViewTests(TestCase):
         )
         target = self._create_project_net(sn=1, name="업무망")
         survivor = self._create_project_net(sn=2, name="외부망", project=other_project)
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
 
         response = self.client.post(
@@ -866,6 +894,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(ProjectNet.objects.filter(sn=survivor.sn, project=other_project).exists())
 
     def test_architecture_start_requires_project_net_then_returns_job_payload(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
 
         missing_response = self.client.post(
@@ -897,6 +926,7 @@ class DocumentWorkflowViewTests(TestCase):
         start_job_mock.assert_called_once()
 
     def test_architecture_generation_payload_does_not_include_project_net_json(self):
+        self._create_document(sn=1, version="0.0", document_type=self.srs_code)
         self._set_generation_state(confirmed_documents={"DOC_SRS": 1, "DOC_ITF": 2})
         self._create_project_net(name="업무망", purpose="내부 시스템")
         state = get_generation_state(self.client.session, self.project)
