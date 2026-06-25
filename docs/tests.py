@@ -1855,6 +1855,8 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertContains(response, 'textarea name="request_content"', html=False)
+        self.assertContains(response, 'maxlength="100"', html=False)
 
     def test_document_detail_shows_approval_request_button_in_edit_mode(self):
         document = self._create_document(sn=1, version="1.0", user=self.user)
@@ -1957,6 +1959,24 @@ class DocumentWorkflowViewTests(TestCase):
         approval = DocumentApproval.objects.get(detail=detail)
         self.assertEqual(approval.request_content, "승인 요청입니다.")
         review_mock.assert_called_once_with(approval.approval_sn)
+
+    def test_document_request_approval_rejects_content_longer_than_100_chars(self):
+        document = self._create_document(sn=51, version="1.0", user=None)
+        detail = self._create_detail(sn=51, document=document)
+        request_content = "가" * 101
+
+        with patch("docs.views.request_fastapi_approval_review") as review_mock:
+            response = self.client.post(
+                reverse("doc_request_approval", args=[document.sn]),
+                {"request_content": request_content},
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "승인 요청 내용은 100자 이하로 입력해 주세요.", html=False)
+        self.assertTrue(response.context["open_approval_request_modal"])
+        self.assertFalse(DocumentApproval.objects.filter(detail=detail).exists())
+        review_mock.assert_not_called()
 
     def test_generation_draft_request_approval_allows_last_editor(self):
         document = self._create_document(sn=47, version="0", document_type=self.srs_code, user=None)

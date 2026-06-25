@@ -122,6 +122,7 @@ from .services import (
 
 GENERATION_JOB_WALLCLOCK_TIME_ZONE = ZoneInfo("Asia/Seoul")
 GENERATION_JOB_FUTURE_SKEW_THRESHOLD = timedelta(hours=1)
+APPROVAL_REQUEST_MAX_LENGTH = DocumentApproval._meta.get_field("request_content").max_length
 
 
 def _get_document_or_404(project, document_sn):
@@ -1288,6 +1289,7 @@ def document_detail(request, document_sn):
         "open_history_modal": preview_detail is not None or request.GET.get("modal") == "history",
         "open_meeting_modal": request.GET.get("modal") == "meeting-files",
         "open_approval_request_modal": request.GET.get("modal") == "approval-request",
+        "approval_request_max_length": APPROVAL_REQUEST_MAX_LENGTH,
         "open_generation_failed_modal": failed_generation_job is not None,
         "failed_generation_job": failed_generation_job,
         "onlyoffice_enabled": bool(settings.ONLYOFFICE_DOCUMENT_SERVER_URL),
@@ -1571,6 +1573,12 @@ def document_request_approval(request, document_sn):
     request_content = request.POST.get("request_content", "").strip()
     if not request_content:
         messages.error(request, "승인 요청 내용을 입력해 주세요.")
+        return redirect(_document_detail_redirect(document, modal="approval-request"))
+    if len(request_content) > APPROVAL_REQUEST_MAX_LENGTH:
+        messages.error(
+            request,
+            f"승인 요청 내용은 {APPROVAL_REQUEST_MAX_LENGTH}자 이하로 입력해 주세요.",
+        )
         return redirect(_document_detail_redirect(document, modal="approval-request"))
 
     approval = create_approval_request(document, actor, request_content)
