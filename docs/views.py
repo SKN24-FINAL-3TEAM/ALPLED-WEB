@@ -1271,6 +1271,13 @@ def document_detail(request, document_sn):
         )
         if failed_generation_job is not None and failed_generation_job.document_id != document.sn:
             failed_generation_job = None
+    can_lock_for_edit = (
+        (not document_change_blocked_by_job)
+        and (not is_history_view)
+        and state == "view"
+        and pending_approval is None
+        and is_working_document(document)
+    )
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
     can_auto_apply = (
         (not document_change_blocked_by_job)
@@ -1303,7 +1310,7 @@ def document_detail(request, document_sn):
         and pending_approval is None
         and is_generation_draft
         and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
-        "can_edit": True,
+        "can_edit": can_lock_for_edit,
         "can_cancel_approval": can_cancel_approval,
         "can_request_approval": can_request_document_approval,
         "can_auto_apply": can_auto_apply,
