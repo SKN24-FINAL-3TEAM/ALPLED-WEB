@@ -1403,8 +1403,7 @@ def document_save(request, document_sn):
                 return JsonResponse({"message": message}, status=502)
             messages.error(request, message)
             return redirect(build_document_detail_url(document, mode="edit"))
-    release_document_lock(document, actor)
-    detail_url = reverse("doc_detail", args=[document.sn])
+    detail_url = build_document_detail_url(document, mode="edit")
     if is_ajax:
         return JsonResponse(
             {
@@ -1555,9 +1554,6 @@ def document_request_approval(request, document_sn):
     if document.possession_user_id and document.possession_user_id != actor.sn:
         messages.error(request, "다른 사용자가 수정중입니다. 승인요청은 수정 후 저장한 뒤 가능합니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
-    if document.possession_user_id == actor.sn:
-        messages.error(request, "승인요청은 수정 후 저장한 뒤 가능합니다.")
-        return redirect(build_document_detail_url(document, mode="edit"))
 
     if not can_request_approval(
         document,

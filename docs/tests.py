@@ -20,6 +20,7 @@ from users.models import User
 from .models import Document, DocumentApproval, DocumentDetail, GenerationJob
 from .services import (
     build_approval_review_view,
+    build_document_detail_url,
     build_generation_request_payload,
     extract_text_from_docx,
     get_document_detail_bytes,
@@ -1510,7 +1511,7 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertContains(response, "REQUIREMENT_GOLD_GENERATION_FAILED")
         self.assertContains(response, "stack trace")
 
-    def test_document_save_releases_lock_and_adds_revision(self):
+    def test_document_save_keeps_lock_and_adds_revision(self):
         document = self._create_document(sn=1, version="0", user=self.user)
         self._create_detail(sn=1, document=document)
 
@@ -1520,9 +1521,10 @@ class DocumentWorkflowViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, build_document_detail_url(document, mode="edit"))
         self.assertEqual(DocumentDetail.objects.filter(document=document).count(), 2)
         document.refresh_from_db()
-        self.assertIsNone(document.possession_user)
+        self.assertEqual(document.possession_user_id, self.user.sn)
 
     def test_saved_working_document_history_is_visible_after_save(self):
         document = self._create_document(sn=44, version="0", user=self.user)
@@ -1648,7 +1650,7 @@ class DocumentWorkflowViewTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["redirect_url"], reverse("doc_detail", args=[document.sn]))
+        self.assertEqual(response.json()["redirect_url"], build_document_detail_url(document, mode="edit"))
         force_save_mock.assert_called_once()
         wait_mock.assert_called_once_with(document, baseline_detail_sn=detail.sn)
 
@@ -1687,6 +1689,7 @@ class DocumentWorkflowViewTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["redirect_url"], build_document_detail_url(document, mode="edit"))
         self.assertEqual(response.json()["latest_detail_sn"], detail.sn)
         force_save_mock.assert_called_once()
 
@@ -1977,6 +1980,23 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertTrue(response.context["open_approval_request_modal"])
         self.assertFalse(DocumentApproval.objects.filter(detail=detail).exists())
         review_mock.assert_not_called()
+
+    def test_document_request_approval_allows_current_editor_and_releases_lock(self):
+        document = self._create_document(sn=11, version="1.0", user=self.user)
+        detail = self._create_detail(sn=11, document=document)
+
+        with patch("docs.views.request_fastapi_approval_review", return_value={"status": "accepted"}) as review_mock:
+            response = self.client.post(
+                reverse("doc_request_approval", args=[document.sn]),
+                {"request_content": "수정 완료 승인 요청"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        approval = DocumentApproval.objects.get(detail=detail)
+        self.assertEqual(approval.request_content, "수정 완료 승인 요청")
+        document.refresh_from_db()
+        self.assertIsNone(document.possession_user)
+        review_mock.assert_called_once_with(approval.approval_sn)
 
     def test_generation_draft_request_approval_allows_last_editor(self):
         document = self._create_document(sn=47, version="0", document_type=self.srs_code, user=None)
