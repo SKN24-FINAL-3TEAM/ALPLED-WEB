@@ -14,6 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 from common.project_selection import resolve_current_project
 from common.signals import ensure_initial_reference_data
 from common.models import YesNoChoices
+from common.pagination import paginate
 from files.services import (
     SEARCH_FIELD_CHOICES,
     apply_file_filters,
@@ -807,7 +808,8 @@ def document_history_list(request):
 
     documents = get_document_history_queryset(current_project, document_code)
 
-    document_rows, latest_job = _build_history_rows(current_project, document_code, documents)
+    documents_page, pagination_context = paginate(request, documents)
+    document_rows, latest_job = _build_history_rows(current_project, document_code, documents_page.object_list)
     can_generate = can_access_initial_generation(current_project, actor, generation_state)
     active_job = None
     if document_code:
@@ -835,6 +837,7 @@ def document_history_list(request):
         "title": page_title,
         "current_project": current_project,
         "documents": document_rows,
+        **pagination_context,
         "has_documents": bool(document_rows),
         "selected_document_code": selected_document_code,
         "selected_document_label": selected_document_label,
@@ -1769,11 +1772,14 @@ def approval_list(request):
             include_requester=include_requester,
         )
 
+    approvals_page, pagination_context = paginate(request, approvals)
+
     context = {
         "active_menu": "approvals",
         "title": "산출물 승인요청",
         "current_project": current_project,
-        "documents": build_approval_rows(approvals),
+        "documents": build_approval_rows(approvals_page.object_list),
+        **pagination_context,
         "document_type_choices": get_document_type_choices(include_all=True),
         "approval_status_choices": get_approval_status_choices(include_all=True),
         "selected_document_code": document_code,

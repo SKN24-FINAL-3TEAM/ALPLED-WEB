@@ -14,6 +14,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_POST
 
 from common.models import YesNoChoices
+from common.pagination import paginate
 from common.project_selection import get_safe_next_url
 from common.signals import ensure_initial_reference_data
 from projects.models import ProjectUserRole
@@ -496,7 +497,9 @@ def user_list(request):
                 | Q(department__icontains=query)
             )
 
-    user_rows = list(users[:10]) if users.exists() else _demo_users()
+    has_users = users.exists()
+    paged_users, pagination_context = paginate(request, users if has_users else _demo_users())
+    user_rows = list(paged_users.object_list)
     selected_user = users.first() if users.exists() else None
 
     role_payloads_by_user = _build_user_project_role_payloads(user_rows)
@@ -521,12 +524,12 @@ def user_list(request):
     context = {
         "active_menu": "users",
         "users": user_rows,
+        **pagination_context,
         "selected_user": selected_user or _demo_users()[0],
         "user_roles": role_rows,
         "active_filter": active,
         "search_field": search_field,
         "query": query,
-        "page_size": request.GET.get("page_size", "10"),
         "title": "사용자 관리",
         "create_user_form": create_form,
         "open_user_create_modal": open_user_create_modal,

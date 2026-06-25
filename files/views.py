@@ -10,6 +10,7 @@ from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 
+from common.pagination import paginate
 from common.project_selection import resolve_current_project
 from common.signals import ensure_initial_reference_data
 from users.models import User
@@ -190,11 +191,14 @@ def file_list(request):
         allowed_file_types=FILE_TYPE_SEQUENCE,
     )
 
+    documents_page, pagination_context = paginate(request, documents)
+
     context = {
         "active_menu": "files",
         "title": "파일 관리",
         "current_project": current_project,
-        "documents": build_project_file_rows(documents),
+        "documents": build_project_file_rows(documents_page.object_list, start_index=documents_page.start_index()),
+        **pagination_context,
         "file_type": file_type,
         "search_field": search_field,
         "query": query,

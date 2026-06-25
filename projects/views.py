@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import urlencode
+from common.pagination import paginate
 from common.project_selection import get_safe_next_url
 
 from common.models import Code, YesNoChoices
@@ -101,12 +102,13 @@ def _search_users(request):
                 | Q(department__icontains=query)
             )
 
-    return list(users[:10]), active, search_field, query
+    page_obj, pagination_context = paginate(request, users, page_param="user_page")
+    return list(page_obj.object_list), active, search_field, query, pagination_context
 
 
 def _build_project_rows(projects, preserved_querystring=""):
     rows = []
-    for project in projects[:10]:
+    for project in projects:
         manager_names = list(
             ProjectUserRole.objects.filter(project=project, role_id=PROJECT_MANAGER_ROLE_CODE)
             .select_related("user")
@@ -400,12 +402,14 @@ def project_list(request):
                 Q(name__icontains=query) | Q(user_roles__user__name__icontains=query)
             ).distinct()
 
-    project_rows = _build_project_rows(projects, preserved_querystring)
+    projects_page, pagination_context = paginate(request, projects)
+    project_rows = _build_project_rows(projects_page.object_list, preserved_querystring)
     if can_manage_assignments:
-        search_users, user_active, user_search_field, user_query = _search_users(request)
+        search_users, user_active, user_search_field, user_query, user_pagination_context = _search_users(request)
         open_project_user_search = request.GET.get("open_project_user_search") == "1"
     else:
         search_users, user_active, user_search_field, user_query = [], "all", "all", ""
+        user_pagination_context = {}
         open_project_user_search = False
     project_target_role = request.GET.get("project_target_role", "manager")
     project_form_state = _get_project_form_state(
@@ -417,14 +421,19 @@ def project_list(request):
     context = {
         "active_menu": "projects",
         "projects": project_rows,
+        **pagination_context,
         "search_field": search_field,
         "query": query,
         "preserved_querystring": preserved_querystring,
-        "page_size": request.GET.get("page_size", "10"),
         "status_filter": request.GET.get("detail_status", "all"),
         "title": "프로젝트 관리",
         "yes_no_choices": YesNoChoices.choices,
         "search_users": search_users,
+        "user_search_page_obj": user_pagination_context.get("page_obj"),
+        "user_search_page_param": user_pagination_context.get("page_param"),
+        "user_search_page_querystring": user_pagination_context.get("page_querystring"),
+        "user_search_page_range": user_pagination_context.get("page_range"),
+        "user_search_page_ellipsis": user_pagination_context.get("page_ellipsis"),
         "user_active": user_active,
         "user_search_field": user_search_field,
         "user_query": user_query,

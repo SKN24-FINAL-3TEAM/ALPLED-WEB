@@ -72,6 +72,10 @@
       </div>
     </form>
   </section>
+
+  <div class="pt-2">
+    {% include "components/pagination.html" %}
+  </div>
 </div>
 
 {% include "components/modal.html" with modal_id="docs-upload-modal" title="파일 등록" subtitle="RFP와 회의록 파일을 프로젝트 문서로 등록합니다." body_template="files/partials/file_upload_body.html" width_class="max-w-4xl" %}

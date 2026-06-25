@@ -62,9 +62,9 @@ def apply_file_filters(params, queryset, *, default_file_type="all", allowed_fil
     return queryset, file_type, search_field, query
 
 
-def build_project_file_rows(queryset):
+def build_project_file_rows(queryset, *, start_index=1):
     rows = []
-    for index, document in enumerate(queryset, start=1):
+    for index, document in enumerate(queryset, start=start_index):
         rows.append(
             {
                 "sn": document.sn,

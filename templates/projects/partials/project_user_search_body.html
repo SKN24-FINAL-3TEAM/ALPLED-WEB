@@ -103,7 +103,7 @@
 </div>
 
 <div class="mt-6">
-  {% include "components/pagination.html" %}
+  {% include "components/pagination.html" with page_obj=user_search_page_obj page_param=user_search_page_param page_querystring=user_search_page_querystring page_range=user_search_page_range page_ellipsis=user_search_page_ellipsis %}
 </div>
 
 <div class="mt-6 flex justify-end">
