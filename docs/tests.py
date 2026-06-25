@@ -522,10 +522,13 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0]["sn"], newer.sn)
 
-    def test_generate_state_hydration_uses_only_completed_version_zero_documents(self):
+    def test_generate_state_hydration_uses_latest_completed_document(self):
         initial_srs = self._create_document(sn=1, version="0", document_type=self.srs_code)
         initial_srs.progress_status = self.progress_completed
         initial_srs.save(update_fields=["progress_status"])
+        approved_srs = self._create_document(sn=10, version="1.0", document_type=self.srs_code)
+        approved_srs.progress_status = self.progress_completed
+        approved_srs.save(update_fields=["progress_status"])
         for index, code in enumerate([self.itf_code, self.arch_code, self.erd_code, self.db_code, self.ts_code], start=2):
             stale_working = self._create_document(sn=index, version="0.0", document_type=code)
             stale_working.progress_status = self.progress_completed
@@ -536,12 +539,29 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
         self.assertEqual(progress_by_code["DOC_SRS"]["status"], "confirmed")
-        self.assertEqual(progress_by_code["DOC_SRS"]["document_sn"], initial_srs.sn)
-        self.assertContains(response, reverse("doc_detail", args=[initial_srs.sn]), html=False)
+        self.assertEqual(progress_by_code["DOC_SRS"]["document_sn"], approved_srs.sn)
+        self.assertContains(response, reverse("doc_detail", args=[approved_srs.sn]), html=False)
         self.assertContains(response, "미리보기")
         self.assertEqual(progress_by_code["DOC_ITF"]["status"], "pending")
         self.assertEqual(progress_by_code["DOC_ARCH"]["status"], "pending")
         self.assertFalse(response.context["is_complete"])
+
+    def test_generate_state_hydration_replaces_stale_session_document_with_latest_approved(self):
+        initial_erd = self._create_document(sn=137, version="0", document_type=self.erd_code)
+        initial_erd.progress_status = self.progress_completed
+        initial_erd.save(update_fields=["progress_status"])
+        approved_erd = self._create_document(sn=171, version="1.0", document_type=self.erd_code)
+        approved_erd.progress_status = self.progress_completed
+        approved_erd.save(update_fields=["progress_status"])
+        self._set_generation_state(confirmed_documents={"DOC_ERD": initial_erd.sn})
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_ERD", "resume": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
+        self.assertEqual(progress_by_code["DOC_ERD"]["status"], "confirmed")
+        self.assertEqual(progress_by_code["DOC_ERD"]["document_sn"], approved_erd.sn)
+        self.assertContains(response, reverse("doc_detail", args=[approved_erd.sn]), html=False)
 
     def test_generate_progress_uses_document_dependency_graph(self):
         initial_srs = self._create_document(sn=1, version="0", document_type=self.srs_code)
@@ -1520,7 +1540,27 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.context["document_state"], "view")
         self.assertTrue(response.context["can_view_revision_history"])
         self.assertContains(response, 'data-modal-target="history-modal"', html=False)
+        self.assertEqual(response.context["history_scope_label"], "같은 산출물 종류의 문서 버전 이력을 확인할 수 있습니다.")
+        self.assertEqual(len(response.context["revision_rows"]), 1)
+        self.assertEqual(response.context["revision_rows"][0]["sn"], document.sn)
+
+    def test_edit_mode_revision_history_uses_current_document_details(self):
+        document = self._create_document(sn=144, version="0", user=self.user)
+        self._create_detail(sn=144, document=document)
+
+        self.client.post(
+            reverse("doc_save", args=[document.sn]),
+            {"content_text": "saved revision text"},
+        )
+
+        with patch("docs.views.extract_text_from_docx", return_value="saved revision text"):
+            response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["document_state"], "edit")
+        self.assertEqual(response.context["history_scope_label"], "현재 수정 중인 문서의 저장 이력을 확인하고 원하는 상세 버전으로 복원할 수 있습니다.")
         self.assertEqual(len(response.context["revision_rows"]), 2)
+        self.assertTrue(all(row["can_restore"] for row in response.context["revision_rows"]))
 
     def test_pending_approval_working_document_history_is_visible(self):
         document = self._create_document(sn=45, version="0", user=None)

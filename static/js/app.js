@@ -1397,7 +1397,10 @@
     if (!previewUrl) return;
 
     const modal = trigger?.closest?.("#history-modal") || document.getElementById("history-modal");
+    const previewPanel = modal?.querySelector("[data-history-preview-panel]");
     const previewContent = modal?.querySelector("[data-history-preview-content]");
+    const previewPlaceholder = modal?.querySelector("[data-history-preview-placeholder]");
+    const previewEditor = modal?.querySelector("[data-history-preview-editor]");
     const previewMeta = modal?.querySelector("[data-history-preview-meta]");
     if (!modal || !previewContent || !previewMeta) return;
 
@@ -1408,6 +1411,24 @@
 
     previewMeta.textContent = "미리보기를 불러오는 중입니다.";
     previewContent.textContent = "선택한 수정 이력을 불러오는 중입니다.";
+    previewContent.classList.add("hidden");
+    if (previewPlaceholder) {
+      previewPlaceholder.textContent = "선택한 수정 이력을 불러오는 중입니다.";
+      previewPlaceholder.classList.remove("hidden");
+    }
+    if (previewEditor) {
+      const existingEditor = onlyOfficeEditors.get(previewEditor);
+      if (existingEditor && typeof existingEditor.destroyEditor === "function") {
+        try {
+          existingEditor.destroyEditor();
+        } catch (error) {
+          // Ignore cleanup failures before replacing the preview editor.
+        }
+      }
+      onlyOfficeEditors.delete(previewEditor);
+      previewEditor.classList.add("hidden");
+      previewEditor.innerHTML = "";
+    }
 
     try {
       const response = await window.fetch(previewUrl, { credentials: "same-origin" });
@@ -1417,13 +1438,50 @@
       }
 
       const payload = await response.json();
-      previewContent.textContent = payload.preview_text || "문서 내용이 없습니다.";
       previewMeta.textContent = payload.created_at && payload.creator_name
         ? `${payload.created_at} · ${payload.creator_name}`
         : "미리보기";
+
+      if (payload.editor_config && previewEditor) {
+        const documentServerUrl = previewPanel?.dataset.documentServerUrl;
+        if (!documentServerUrl) {
+          throw new Error("OnlyOffice 서버 주소가 설정되지 않았습니다.");
+        }
+
+        const scriptUrl = `${documentServerUrl}/web-apps/apps/api/documents/api.js`;
+        await loadScriptOnce(scriptUrl);
+        if (!(window.DocsAPI && window.DocsAPI.DocEditor)) {
+          throw new Error("DocsAPI unavailable");
+        }
+
+        const previewHeight = Math.max(520, Math.floor(window.innerHeight * 0.62));
+        const holder = document.createElement("div");
+        holder.id = `history-onlyoffice-${Math.random().toString(36).slice(2)}`;
+        holder.className = "h-full w-full";
+        holder.style.height = `${previewHeight}px`;
+        previewEditor.style.height = `${previewHeight}px`;
+        previewEditor.innerHTML = "";
+        previewEditor.appendChild(holder);
+        previewEditor.classList.remove("hidden");
+        previewPlaceholder?.classList.add("hidden");
+
+        const config = payload.editor_config;
+        config.width = config.width || "100%";
+        config.height = previewHeight;
+        const editor = new window.DocsAPI.DocEditor(holder.id, config);
+        onlyOfficeEditors.set(previewEditor, editor);
+        return;
+      }
+
+      previewContent.textContent = payload.preview_text || "문서 내용이 없습니다.";
+      previewContent.classList.remove("hidden");
+      previewPlaceholder?.classList.add("hidden");
     } catch (error) {
       previewMeta.textContent = "미리보기를 불러오지 못했습니다.";
       previewContent.textContent = error.message || "수정 이력 미리보기를 불러오지 못했습니다.";
+      previewContent.classList.remove("hidden");
+      previewPlaceholder?.classList.add("hidden");
+      previewEditor?.classList.add("hidden");
       showAppAlert("수정 이력 미리보기를 불러오지 못했습니다.", "error");
     }
   }

@@ -1173,21 +1173,58 @@ def document_detail(request, document_sn):
         allowed_file_types=("FILE_MEETING",),
     )
 
-    revisions = (
-        document.details.filter(is_deleted="N")
-        .select_related("created_by")
-        .order_by("-created_at", "-sn")
-    )
-    revision_rows = [
-        {
-            "sn": detail.sn,
-            "created_at": detail.created_at,
-            "creator_name": getattr(detail.created_by, "name", "-") or "-",
-            "preview_url": build_history_preview_api_url(document, detail.sn),
-            "restore_url": reverse("doc_restore_revision", args=[document.sn, detail.sn]),
-        }
-        for detail in revisions
-    ]
+    if state == "edit":
+        revisions = (
+            document.details.filter(is_deleted="N")
+            .select_related("created_by")
+            .order_by("-created_at", "-sn")
+        )
+        revision_rows = [
+            {
+                "sn": detail.sn,
+                "title": f"상세 이력 #{detail.sn}",
+                "subtitle": "현재 문서의 저장 이력",
+                "created_at": detail.created_at,
+                "creator_name": getattr(detail.created_by, "name", "-") or "-",
+                "preview_url": build_history_preview_api_url(document, detail.sn),
+                "restore_url": reverse("doc_restore_revision", args=[document.sn, detail.sn]),
+                "can_restore": True,
+            }
+            for detail in revisions
+        ]
+        history_scope_label = "현재 수정 중인 문서의 저장 이력을 확인하고 원하는 상세 버전으로 복원할 수 있습니다."
+    else:
+        document_revisions = (
+            Document.objects.filter(
+                project=current_project,
+                document_type_id=document.document_type_id,
+            )
+            .exclude(version="0.0")
+            .select_related("created_by")
+            .order_by("-created_at", "-sn")
+        )
+        revision_rows = []
+        for revision_document in document_revisions:
+            revision_detail = get_latest_detail(revision_document)
+            revision_rows.append(
+                {
+                    "sn": revision_document.sn,
+                    "title": f"문서 #{revision_document.sn}",
+                    "subtitle": f"버전 {revision_document.version or '-'}",
+                    "created_at": revision_document.created_at,
+                    "creator_name": getattr(revision_document.created_by, "name", "-") or "-",
+                    "preview_url": (
+                        build_history_preview_api_url(revision_document, revision_detail.sn)
+                        if revision_detail is not None
+                        else ""
+                    ),
+                    "restore_url": "",
+                    "can_restore": False,
+                    "detail_url": reverse("doc_detail", args=[revision_document.sn]),
+                    "is_current": revision_document.sn == document.sn,
+                }
+            )
+        history_scope_label = "같은 산출물 종류의 문서 버전 이력을 확인할 수 있습니다."
     can_view_revision_history = True
 
     generation_state = get_generation_state(request.session, current_project)
@@ -1226,6 +1263,7 @@ def document_detail(request, document_sn):
         "preview_detail": preview_detail,
         "preview_text": preview_text,
         "revision_rows": revision_rows,
+        "history_scope_label": history_scope_label,
         "can_view_revision_history": can_view_revision_history,
         "can_confirm": (not is_history_view)
         and state == "view"
@@ -1554,6 +1592,15 @@ def document_history_preview(request, document_sn, detail_sn):
     detail = get_detail_by_sn(document, detail_sn)
     if detail is None:
         return JsonResponse({"message": "Preview revision was not found."}, status=404)
+    if settings.ONLYOFFICE_DOCUMENT_SERVER_URL:
+        return JsonResponse(
+            {
+                "editor_config": build_editor_config(request, document, actor, "view", detail=detail),
+                "creator_name": getattr(detail.created_by, "name", "-") or "-",
+                "created_at": detail.created_at.strftime("%Y-%m-%d %H:%M"),
+            }
+        )
+
     try:
         preview_text = extract_text_from_docx(get_document_detail_bytes(detail)) or "Document content is empty."
     except ValueError:

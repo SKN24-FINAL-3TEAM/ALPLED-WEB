@@ -238,7 +238,7 @@
       <div class="flex items-center justify-between border-b border-slate-200 px-6 py-5">
         <div>
           <h3 class="text-lg font-semibold text-slate-900">수정 이력 보기</h3>
-          <p class="mt-1 text-sm text-slate-500">저장한 이력을 확인하고 원하는 버전으로 복원할 수 있습니다.</p>
+          <p class="mt-1 text-sm text-slate-500">{{ history_scope_label }}</p>
         </div>
         <button type="button" data-modal-hide="history-modal" aria-label="닫기" class="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700">
           <span class="text-3xl leading-none">&times;</span>
@@ -248,13 +248,28 @@
         <div class="space-y-3">
           {% for row in revision_rows %}
             <div class="rounded-2xl border border-slate-200 p-4" data-history-preview-row>
-              <p class="text-sm font-semibold text-slate-900">{{ row.created_at|date:"Y-m-d H:i" }}</p>
-              <p class="mt-1 text-xs text-slate-500">{{ row.creator_name }}</p>
+              <div class="flex items-start justify-between gap-3">
+                <div>
+                  <p class="text-sm font-semibold text-slate-900">
+                    {% if row.title %}{{ row.title }}{% else %}{{ row.created_at|date:"Y-m-d H:i" }}{% endif %}
+                  </p>
+                  <p class="mt-1 text-xs text-slate-500">{{ row.subtitle }}</p>
+                </div>
+                {% if row.is_current %}
+                  <span class="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-[11px] font-semibold text-blue-700">현재</span>
+                {% endif %}
+              </div>
+              <p class="mt-2 text-xs text-slate-500">{{ row.created_at|date:"Y-m-d H:i" }} · {{ row.creator_name }}</p>
               <div class="mt-3 flex gap-2">
-                <button type="button" data-history-preview-url="{{ row.preview_url }}" data-history-preview-button class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                <button type="button" {% if row.preview_url %}data-history-preview-url="{{ row.preview_url }}"{% else %}disabled{% endif %} data-history-preview-button class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
                   미리보기
                 </button>
-                {% if document_state == "edit" %}
+                {% if row.detail_url %}
+                  <a href="{{ row.detail_url }}" class="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
+                    문서 보기
+                  </a>
+                {% endif %}
+                {% if row.can_restore %}
                   <form method="post" action="{{ row.restore_url }}">
                     {% csrf_token %}
                     <button type="submit" class="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700">
@@ -270,9 +285,13 @@
             </div>
           {% endfor %}
         </div>
-        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5">
+        <div class="rounded-2xl border border-slate-200 bg-slate-50 px-6 py-5" data-history-preview-panel data-document-server-url="{{ onlyoffice_document_server_url }}">
           <p data-history-preview-meta class="mb-3 text-sm font-semibold text-slate-900">최신 버전 미리보기</p>
-          <pre data-history-preview-content class="whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ preview_text|default:"미리볼 문서를 선택해 주세요." }}</pre>
+          <div data-history-preview-placeholder class="flex min-h-[520px] items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white px-6 text-center text-sm text-slate-500">
+            미리보기 버튼을 누르면 선택한 이력을 OnlyOffice로 표시합니다.
+          </div>
+          <div data-history-preview-editor class="hidden min-h-[520px] overflow-hidden rounded-xl border border-slate-200 bg-white"></div>
+          <pre data-history-preview-content class="hidden whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ preview_text|default:"미리볼 문서를 선택해 주세요." }}</pre>
         </div>
       </div>
     </div>

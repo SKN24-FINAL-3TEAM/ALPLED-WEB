@@ -678,14 +678,14 @@ def is_working_document(document):
     return str(getattr(document, "version", "") or "") in WORKING_DOCUMENT_VERSIONS
 
 
-def _generation_completed_initial_queryset(project, document_code):
+def _generation_completed_queryset(project, document_code):
     return (
         Document.objects.filter(
             project=project,
             document_type_id=document_code,
             progress_status_id=PROGRESS_COMPLETED,
-            version="0",
         )
+        .exclude(version="0.0")
         .select_related("project", "document_type", "created_by", "updated_by", "possession_user")
         .order_by("-updated_at", "-created_at", "-sn")
     )
@@ -695,7 +695,13 @@ def get_generation_saved_document(project, document_code, state=None):
     if project is None:
         return None
 
-    confirmed_document = _generation_completed_initial_queryset(project, document_code).first()
+    confirmed_document = max(
+        _generation_completed_queryset(project, document_code),
+        key=lambda document: (
+            document.sn,
+        ),
+        default=None,
+    )
     if state:
         document_sn = (state.get("confirmed_documents", {}) or {}).get(document_code) or (
             state.get("confirmed_documents", {}) or {}
@@ -711,7 +717,7 @@ def get_generation_saved_document(project, document_code, state=None):
                 .first()
             )
             if document is not None:
-                if document.progress_status_id == PROGRESS_COMPLETED and str(document.version or "") == "0":
+                if document.progress_status_id == PROGRESS_COMPLETED and confirmed_document is None:
                     return document
                 if confirmed_document is not None:
                     return confirmed_document
@@ -1988,8 +1994,8 @@ def wait_for_new_revision(document, *, baseline_detail_sn=None, timeout_seconds=
     return get_latest_detail(document)
 
 
-def build_editor_config(request, document, actor, mode):
-    latest_detail = get_latest_detail(document)
+def build_editor_config(request, document, actor, mode, detail=None):
+    latest_detail = detail or get_latest_detail(document)
     public_base_url = get_public_base_url(request)
     if not public_base_url:
         public_base_url = request.build_absolute_uri("/").rstrip("/")
