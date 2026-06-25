@@ -1182,6 +1182,50 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(latest_response.status_code, 200)
         self.assertContains(latest_response, 'data-modal-target="meeting-files-modal"', html=False)
 
+    def test_document_detail_blocks_edit_actions_while_auto_apply_is_running(self):
+        document = self._create_document(sn=52, version="1.0", user=self.user)
+        self._create_detail(sn=52, document=document)
+        self._create_generation_job(
+            sn=52,
+            job_id="job-auto-apply-running",
+            document=document,
+            document_type=self.srs_code,
+            job_status=self.progress_processing,
+            request_payload={"udt_yn": "Y"},
+        )
+
+        response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["document_change_blocked_by_job"])
+        self.assertFalse(response.context["can_auto_apply"])
+        self.assertFalse(response.context["can_request_approval"])
+        self.assertContains(response, 'data-doc-edit-blocked-by-job="true"', html=False)
+        self.assertContains(response, "회의 내용 자동 적용이 진행 중입니다.", html=False)
+        self.assertContains(response, "data-doc-save-submit disabled", html=False)
+        self.assertNotContains(response, f'{reverse("doc_editor_config", args=[document.sn])}?mode=edit', html=False)
+
+    def test_document_save_is_blocked_while_auto_apply_is_running(self):
+        document = self._create_document(sn=53, version="1.0", user=self.user)
+        self._create_detail(sn=53, document=document)
+        self._create_generation_job(
+            sn=53,
+            job_id="job-auto-apply-save-block",
+            document=document,
+            document_type=self.srs_code,
+            job_status=self.progress_pending,
+            request_payload={"udt_yn": "Y"},
+        )
+
+        response = self.client.post(
+            reverse("doc_save", args=[document.sn]),
+            {"content_text": "자동적용 중 저장 시도"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["message"], "회의 내용 자동 적용이 완료된 뒤 다시 시도해 주세요.")
+
     def test_document_detail_only_requester_sees_cancel_approval_button(self):
         document = self._create_document(sn=60, version="1.0", user=None)
         detail = self._create_detail(sn=60, document=document)

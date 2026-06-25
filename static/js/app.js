@@ -477,9 +477,30 @@
     badgeNode.textContent = resolveJobStatusLabel(payload);
   }
 
+  function isBlockingAutoApplyJob(payload = {}) {
+    const statusCode = resolveJobStatusCode(payload);
+    return payload.job_kind === "auto_apply" && (statusCode === "PRGRS_PENDING" || statusCode === "PRGRS_PROCESSING");
+  }
+
+  function setDocumentEditBlocked(blocked) {
+    const editRoot = document.querySelector("[data-onlyoffice-edit-root]");
+    if (editRoot) {
+      editRoot.dataset.docEditBlockedByJob = blocked ? "true" : "false";
+    }
+    document.querySelectorAll("[data-doc-save-submit]").forEach((button) => {
+      button.disabled = blocked;
+    });
+    document.querySelectorAll("[data-doc-save-form] textarea, form[action*='/save/'] textarea").forEach((textarea) => {
+      textarea.readOnly = blocked;
+    });
+  }
+
   function updateDocJobUi(payload = {}) {
     updateDocJobInline(payload);
     updateDocProgressBadge(payload);
+    if (payload.job_kind === "auto_apply") {
+      setDocumentEditBlocked(isBlockingAutoApplyJob(payload));
+    }
   }
 
   function showDocJobCtaInline(form) {
@@ -1344,6 +1365,11 @@
     const csrfToken = form.querySelector('input[name="csrfmiddlewaretoken"]')?.value || "";
     const formData = new FormData(form);
     const requestUrl = resolveFormSubmitUrl(form);
+
+    if (editRoot?.dataset.docEditBlockedByJob === "true") {
+      setInlineStatus(statusNode, "회의 내용 자동 적용이 완료된 뒤 다시 시도해 주세요.", "warning");
+      return;
+    }
 
     form.dataset.submitting = "true";
     if (saveButton) {

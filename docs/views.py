@@ -641,6 +641,20 @@ def _get_document_active_job(request, current_project, document):
     return None
 
 
+def _get_running_document_auto_apply_job(current_project, document):
+    if current_project is None or document is None:
+        return None
+    return get_running_auto_apply_job(
+        current_project,
+        document.document_type_id,
+        tracking_document_sn=document.sn,
+    )
+
+
+def _is_auto_apply_blocking_document_changes(current_project, document):
+    return _get_running_document_auto_apply_job(current_project, document) is not None
+
+
 def _build_job_badge(job_status_code, job_status_label):
     status_map = {
         PROGRESS_PENDING: "inline-flex whitespace-nowrap rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800",
@@ -1244,6 +1258,7 @@ def document_detail(request, document_sn):
         else ""
     )
     active_job = _get_document_active_job(request, current_project, document)
+    document_change_blocked_by_job = _is_auto_apply_blocking_document_changes(current_project, document)
     failed_generation_job = None
     if request.GET.get("modal") == "generation-failed":
         failed_generation_job = _resolve_generation_job_modal(
@@ -1254,9 +1269,14 @@ def document_detail(request, document_sn):
         if failed_generation_job is not None and failed_generation_job.document_id != document.sn:
             failed_generation_job = None
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
-    can_auto_apply = (not is_history_view) and _can_show_auto_apply(document, actor, current_project, latest_detail)
+    can_auto_apply = (
+        (not document_change_blocked_by_job)
+        and (not is_history_view)
+        and _can_show_auto_apply(document, actor, current_project, latest_detail)
+    )
     can_request_document_approval = (
-        state == "edit"
+        (not document_change_blocked_by_job)
+        and state == "edit"
         and document.possession_user_id == actor.sn
         and can_request_approval(document, actor, pending_approval=pending_approval)
     )
@@ -1305,6 +1325,7 @@ def document_detail(request, document_sn):
         "is_generation_draft": is_generation_draft,
         "generation_return_url": generation_return_url,
         "active_job": active_job,
+        "document_change_blocked_by_job": document_change_blocked_by_job,
     }
     return render(request, "docs/doc_detail.html", context)
 
@@ -1346,6 +1367,12 @@ def document_save(request, document_sn):
             return JsonResponse({"message": "문서를 점유한 사용자만 저장할 수 있습니다."}, status=403)
         messages.error(request, "문서를 점유한 사용자만 저장할 수 있습니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
+    if _is_auto_apply_blocking_document_changes(current_project, document):
+        message = "회의 내용 자동 적용이 완료된 뒤 다시 시도해 주세요."
+        if is_ajax:
+            return JsonResponse({"message": message}, status=409)
+        messages.error(request, message)
+        return redirect(build_document_detail_url(document, mode="edit"))
 
     latest_detail = get_latest_detail(document)
     text_content = request.POST.get("content_text", "").strip()
@@ -1562,6 +1589,9 @@ def document_request_approval(request, document_sn):
     if document.possession_user_id != actor.sn:
         messages.error(request, "승인요청은 수정모드에서만 가능합니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
+    if _is_auto_apply_blocking_document_changes(current_project, document):
+        messages.error(request, "회의 내용 자동 적용이 완료된 뒤 승인요청을 진행해 주세요.")
+        return redirect(build_document_detail_url(document, mode="edit"))
 
     if not can_request_approval(
         document,

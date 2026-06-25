@@ -96,7 +96,7 @@
       </div>
       <div
         data-onlyoffice-root
-        data-config-url="{{ editor_config_url }}{% if document_state == 'edit' %}?mode=edit{% endif %}"
+        data-config-url="{{ editor_config_url }}{% if document_state == 'edit' and not document_change_blocked_by_job %}?mode=edit{% endif %}"
         data-document-server-url="{{ onlyoffice_document_server_url }}"
         class="min-h-[720px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-50"
       >
@@ -107,13 +107,20 @@
         <div
           class="mt-6 space-y-4"
           data-onlyoffice-edit-root
+          data-doc-edit-blocked-by-job="{% if document_change_blocked_by_job %}true{% else %}false{% endif %}"
           data-doc-detail-url="{% url 'doc_detail' document.sn %}"
           data-doc-save-url="{% url 'doc_save' document.sn %}"
           data-doc-latest-detail-sn="{{ latest_detail.sn|default:'' }}"
         >
-          <div class="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
-            저장 버튼을 누르면 OnlyOffice 문서를 저장하고 수정모드를 유지합니다. 승인요청 전까지 현재 수정자가 계속 수정할 수 있습니다.
-          </div>
+          {% if document_change_blocked_by_job %}
+            <div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+              회의 내용 자동 적용이 진행 중입니다. 작업이 완료될 때까지 문서 저장과 승인요청을 잠시 사용할 수 없습니다.
+            </div>
+          {% else %}
+            <div class="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-4 text-sm text-blue-900">
+              저장 버튼을 누르면 OnlyOffice 문서를 저장하고 수정모드를 유지합니다. 승인요청 전까지 현재 수정자가 계속 수정할 수 있습니다.
+            </div>
+          {% endif %}
           <div data-doc-save-status class="hidden rounded-2xl border px-4 py-3 text-sm"></div>
           <div class="flex justify-end gap-3">
             <form method="post" action="{% url 'doc_cancel_edit' document.sn %}">
@@ -125,7 +132,7 @@
             <form method="post" action="{% url 'doc_save' document.sn %}" data-doc-save-form>
               {% csrf_token %}
               <input type="hidden" name="baseline_detail_sn" value="{{ latest_detail.sn|default:'' }}">
-              <button type="submit" data-doc-save-submit class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300">
+              <button type="submit" data-doc-save-submit {% if document_change_blocked_by_job %}disabled{% endif %} class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300">
                 저장
               </button>
             </form>
@@ -141,9 +148,9 @@
           <div class="space-y-4">
             <form method="post" action="{% url 'doc_save' document.sn %}" class="space-y-4">
               {% csrf_token %}
-              <textarea name="content_text" rows="18" class="w-full rounded-2xl border border-slate-200 px-4 py-4 text-sm text-slate-900 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100">{{ latest_text }}</textarea>
+              <textarea name="content_text" rows="18" {% if document_change_blocked_by_job %}readonly{% endif %} class="w-full rounded-2xl border border-slate-200 px-4 py-4 text-sm text-slate-900 shadow-sm focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-100">{{ latest_text }}</textarea>
               <div class="flex justify-end gap-3">
-                <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700">
+                <button type="submit" {% if document_change_blocked_by_job %}disabled{% endif %} class="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300">
                   저장
                 </button>
               </div>
