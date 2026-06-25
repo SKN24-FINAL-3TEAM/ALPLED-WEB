@@ -1568,6 +1568,16 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(len(response.context["revision_rows"]), 2)
         self.assertTrue(all(row["can_restore"] for row in response.context["revision_rows"]))
 
+    def test_current_editor_reenters_document_in_edit_mode_without_query_param(self):
+        document = self._create_document(sn=145, version="1.0", user=self.user)
+        self._create_detail(sn=145, document=document)
+
+        with patch("docs.views.extract_text_from_docx", return_value="current editor text"):
+            response = self.client.get(reverse("doc_detail", args=[document.sn]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["document_state"], "edit")
+
     def test_pending_approval_working_document_history_is_visible(self):
         document = self._create_document(sn=45, version="0", user=None)
         detail = self._create_detail(sn=45, document=document)
@@ -1850,16 +1860,16 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["document_type_choices"][1][0], "DOC_SRS")
 
-    def test_document_detail_shows_approval_request_button_in_view_mode_for_last_editor(self):
+    def test_document_detail_hides_approval_request_button_in_view_mode(self):
         document = self._create_document(sn=1, version="1.0", user=None)
         self._create_detail(sn=1, document=document)
 
         response = self.client.get(reverse("doc_detail", args=[document.sn]))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
-        self.assertContains(response, 'textarea name="request_content"', html=False)
-        self.assertContains(response, 'maxlength="100"', html=False)
+        self.assertFalse(response.context["can_request_approval"])
+        self.assertNotContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertNotContains(response, 'textarea name="request_content"', html=False)
 
     def test_document_detail_shows_approval_request_button_in_edit_mode(self):
         document = self._create_document(sn=1, version="1.0", user=self.user)
@@ -1868,9 +1878,12 @@ class DocumentWorkflowViewTests(TestCase):
         response = self.client.get(reverse("doc_detail", args=[document.sn]), {"mode": "edit"})
 
         self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["can_request_approval"])
         self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertContains(response, 'textarea name="request_content"', html=False)
+        self.assertContains(response, 'maxlength="100"', html=False)
 
-    def test_generation_draft_detail_shows_approval_request_button_after_save(self):
+    def test_generation_draft_detail_hides_approval_request_button_in_view_mode(self):
         document = self._create_document(sn=46, version="0", document_type=self.srs_code, user=None)
         self._create_detail(sn=46, document=document)
         self._set_generation_state(draft_documents={"DOC_SRS": document.sn})
@@ -1879,10 +1892,10 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["is_generation_draft"])
-        self.assertTrue(response.context["can_request_approval"])
-        self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertFalse(response.context["can_request_approval"])
+        self.assertNotContains(response, 'data-modal-target="approval-request-modal"', html=False)
 
-    def test_working_document_from_history_url_still_shows_edit_and_approval_buttons(self):
+    def test_working_document_from_history_url_still_shows_edit_button_without_approval_button(self):
         document = self._create_document(sn=48, version="0", document_type=self.srs_code, user=None)
         self._create_detail(sn=48, document=document)
         self._set_generation_state(draft_documents={"DOC_SRS": document.sn})
@@ -1891,9 +1904,9 @@ class DocumentWorkflowViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.context["can_edit"])
-        self.assertTrue(response.context["can_request_approval"])
+        self.assertFalse(response.context["can_request_approval"])
         self.assertContains(response, reverse("doc_lock", args=[document.sn]), html=False)
-        self.assertContains(response, 'data-modal-target="approval-request-modal"', html=False)
+        self.assertNotContains(response, 'data-modal-target="approval-request-modal"', html=False)
 
     def test_locked_generation_draft_hides_save_and_edit_actions(self):
         ProjectUserRole.objects.filter(project=self.project, user=self.other_user).update(role=self.role_manager)

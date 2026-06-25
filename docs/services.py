@@ -1979,7 +1979,7 @@ def get_document_view_state(document, actor, preferred_mode="view"):
 
     if document.possession_user_id and document.possession_user_id != actor.sn:
         return "readonly", pending_approval
-    if document.possession_user_id and document.possession_user_id == actor.sn and preferred_mode == "edit":
+    if document.possession_user_id and document.possession_user_id == actor.sn:
         return "edit", pending_approval
     return "view", pending_approval
 

@@ -1255,6 +1255,11 @@ def document_detail(request, document_sn):
             failed_generation_job = None
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
     can_auto_apply = (not is_history_view) and _can_show_auto_apply(document, actor, current_project, latest_detail)
+    can_request_document_approval = (
+        state == "edit"
+        and document.possession_user_id == actor.sn
+        and can_request_approval(document, actor, pending_approval=pending_approval)
+    )
 
     context = {
         "active_menu": "doc_history",
@@ -1277,7 +1282,7 @@ def document_detail(request, document_sn):
         and (is_project_manager(current_project, actor) or document.created_by_id == actor.sn),
         "can_edit": True,
         "can_cancel_approval": can_cancel_approval,
-        "can_request_approval": True,
+        "can_request_approval": can_request_document_approval,
         "can_auto_apply": can_auto_apply,
         "locked_by_name": getattr(document.possession_user, "name", ""),
         "meeting_documents": build_project_file_rows(meeting_files),
@@ -1553,6 +1558,9 @@ def document_request_approval(request, document_sn):
 
     if document.possession_user_id and document.possession_user_id != actor.sn:
         messages.error(request, "다른 사용자가 수정중입니다. 승인요청은 수정 후 저장한 뒤 가능합니다.")
+        return redirect(reverse("doc_detail", args=[document.sn]))
+    if document.possession_user_id != actor.sn:
+        messages.error(request, "승인요청은 수정모드에서만 가능합니다.")
         return redirect(reverse("doc_detail", args=[document.sn]))
 
     if not can_request_approval(
