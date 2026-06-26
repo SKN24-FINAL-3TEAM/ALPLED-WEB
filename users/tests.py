@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.template.defaultfilters import date as django_date
 from django.test import TestCase
 from django.urls import reverse
@@ -7,6 +9,8 @@ from common.models import YesNoChoices
 from .models import User
 from .views import (
     DEFAULT_DOCUMENT_CODE,
+    RFP_TEMPLATE_FILENAME,
+    RFP_TEMPLATE_URI,
     TEMP_PASSWORD,
     TEMP_PASSWORD_REDIRECT_SESSION_KEY,
 )
@@ -100,7 +104,26 @@ class UserViewTests(TestCase):
         self.assertTemplateUsed(response, "home.html")
         self.assertContains(response, "ALPLED 개발 산출물")
         self.assertContains(response, "서비스 사용 흐름")
-        self.assertNotContains(response, "border-blue-200 bg-blue-50 text-blue-700")
+        self.assertContains(response, "border-blue-500")
+        self.assertContains(response, reverse("download_rfp_template"))
+
+    def test_authenticated_user_can_download_rfp_template(self):
+        self.client.force_login(self.admin)
+
+        with patch("users.views.read_bytes_from_uri", return_value=b"template-bytes") as mocked_read:
+            response = self.client.get(reverse("download_rfp_template"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        self.assertEqual(
+            response["Content-Disposition"],
+            f'attachment; filename="{RFP_TEMPLATE_FILENAME}"',
+        )
+        self.assertEqual(response.content, b"template-bytes")
+        mocked_read.assert_called_once_with(RFP_TEMPLATE_URI)
 
     def test_authenticated_user_is_logged_out_when_login_page_is_loaded(self):
         self.client.force_login(self.admin)

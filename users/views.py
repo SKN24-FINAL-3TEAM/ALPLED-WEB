@@ -8,6 +8,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models.deletion import ProtectedError
 from django.db import transaction
 from django.db.models import Q
+from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.views.decorators.cache import never_cache
@@ -17,12 +18,15 @@ from common.models import YesNoChoices
 from common.pagination import paginate
 from common.project_selection import get_safe_next_url
 from common.signals import ensure_initial_reference_data
+from common.storage import read_bytes_from_uri
 from projects.models import ProjectUserRole
 
 from .models import User
 
 
 DEFAULT_DOCUMENT_CODE = "DOC_SRS"
+RFP_TEMPLATE_URI = "s3://alpled-s3/system_docs/rfp_template.docx"
+RFP_TEMPLATE_FILENAME = "rfp_template.docx"
 TEMP_PASSWORD = "abc1234"
 TEMP_PASSWORD_REDIRECT_SESSION_KEY = "temp_password_redirect_url"
 USER_ID_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{7,10}$")
@@ -69,6 +73,22 @@ def home_view(request):
             "selected_document_code": "",
         },
     )
+
+
+@login_required(login_url="home")
+def download_rfp_template_view(request):
+    try:
+        template_bytes = read_bytes_from_uri(RFP_TEMPLATE_URI)
+    except Exception:
+        messages.error(request, "\ubb38\uc11c \uc591\uc2dd\uc744 \ub2e4\uc6b4\ub85c\ub4dc\ud560 \uc218 \uc5c6\uc2b5\ub2c8\ub2e4.")
+        return redirect("home")
+
+    response = HttpResponse(
+        template_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{RFP_TEMPLATE_FILENAME}"'
+    return response
 
 
 @never_cache
