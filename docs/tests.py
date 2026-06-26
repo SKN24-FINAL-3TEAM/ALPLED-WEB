@@ -1352,6 +1352,31 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertEqual(payload["redirect_url"], reverse("doc_detail", args=[draft.sn]))
 
+    def test_document_job_status_marks_versioned_completed_document_confirmed_in_session(self):
+        document = self._create_document(sn=31, version="1.1", document_type=self.arch_code)
+        job = self._create_generation_job(
+            sn=31,
+            job_id="job-arch-completed",
+            document=document,
+            document_type=self.arch_code,
+            job_status=self.progress_completed,
+        )
+
+        response = self.client.get(
+            reverse("doc_job_status"),
+            {
+                "job_kind": "initial",
+                "docs_cd": "DOC_ARCH",
+                "job_id": job.job_id,
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        session_state = self.client.session["docs_initial_generation"]
+        self.assertEqual(session_state["confirmed_documents"]["DOC_ARCH"], document.sn)
+        self.assertNotIn("DOC_ARCH", session_state["draft_documents"])
+
     def test_document_job_status_uses_generation_job_started_dt_for_elapsed_time(self):
         started_at = timezone.now() - timedelta(seconds=125)
         job = self._create_generation_job(

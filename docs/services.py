@@ -1161,6 +1161,21 @@ def set_generation_draft_document(state, document):
     return state
 
 
+def set_generation_document_from_job(state, document):
+    if document is None:
+        return state
+    code = document.document_type_id
+    if is_working_document(document):
+        state.setdefault("draft_documents", {})[code] = document.sn
+        state.setdefault("confirmed_documents", {}).pop(code, None)
+        state.setdefault("confirmed_documents", {}).pop(str(code), None)
+    else:
+        state.setdefault("confirmed_documents", {})[code] = document.sn
+        state.setdefault("draft_documents", {}).pop(code, None)
+        state.setdefault("draft_documents", {}).pop(str(code), None)
+    return state
+
+
 def clear_generation_draft_document(state, document_code):
     state.setdefault("draft_documents", {}).pop(document_code, None)
     return state

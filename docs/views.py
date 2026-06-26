@@ -114,6 +114,7 @@ from .services import (
     save_generation_state,
     save_doc_job_snapshot,
     save_revision,
+    set_generation_document_from_job,
     set_generation_draft_document,
     update_generation_selected_files,
     validate_document_content_token,
@@ -514,7 +515,7 @@ def _serialize_job_status(request, current_project, document_code, job_kind, job
                 status="failed",
             )
         if job.document is not None:
-            set_generation_draft_document(generation_state, job.document)
+            set_generation_document_from_job(generation_state, job.document)
             save_generation_state(request.session, generation_state)
     else:
         job = find_generation_job(
