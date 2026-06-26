@@ -220,6 +220,17 @@ class UserViewTests(TestCase):
         self.assertEqual(self.admin.position, "Lead")
         self.assertEqual(self.admin.tmpr_pswd_yn, YesNoChoices.NO)
 
+        home_response = self.client.get(reverse("home"))
+        self.assertEqual(home_response.status_code, 200)
+
+        follow_response = self.client.get(reverse("user_profile"))
+        self.assertEqual(follow_response.status_code, 200)
+
+        self.admin.refresh_from_db()
+        self.assertEqual(self.admin.name, "Updated Admin")
+        self.assertEqual(self.admin.department, "Platform")
+        self.assertEqual(self.admin.position, "Lead")
+
     def test_profile_page_renders_same_validation_constraints_as_user_modals(self):
         self.client.force_login(self.admin)
 

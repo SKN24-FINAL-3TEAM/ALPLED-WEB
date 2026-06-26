@@ -35,7 +35,6 @@ def _ensure_admin_user():
     try:
         User = get_user_model()
         admin = User.objects.filter(user_id="admin").first()
-        created = False
         if admin is None:
             next_sn = (User.objects.order_by("-sn").values_list("sn", flat=True).first() or 0) + 1
             with connection.cursor() as cursor:
@@ -75,18 +74,22 @@ def _ensure_admin_user():
                     ],
                 )
             admin = User.objects.get(sn=next_sn)
-            created = True
 
-        admin.name = "관리자"
-        admin.department = "시스템"
-        admin.position = "관리자"
-        admin.sys_mngr_yn = "Y"
-        admin.use_yn = "Y"
-        admin.created_by = admin
-        admin.updated_by = admin
-        if created:
-            admin.tmpr_pswd_yn = "N"
-        admin.save()
+        update_fields = []
+        if admin.sys_mngr_yn != "Y":
+            admin.sys_mngr_yn = "Y"
+            update_fields.append("sys_mngr_yn")
+        if admin.use_yn != "Y":
+            admin.use_yn = "Y"
+            update_fields.append("use_yn")
+        if admin.created_by_id is None:
+            admin.created_by = admin
+            update_fields.append("created_by")
+        if admin.updated_by_id is None:
+            admin.updated_by = admin
+            update_fields.append("updated_by")
+        if update_fields:
+            admin.save(update_fields=update_fields)
         return admin
     except Exception:
         return None
