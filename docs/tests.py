@@ -2255,4 +2255,10 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(response.status_code, 302)
         approval.refresh_from_db()
         self.assertEqual(approval.approval_status_id, "APRV_COM")
-        self.assertTrue(Document.objects.filter(version="1.1").exists())
+        approved_document = Document.objects.get(version="1.1")
+        self.assertEqual(response.url, reverse("doc_detail", args=[approved_document.sn]))
+
+        detail_response = self.client.get(response.url)
+
+        self.assertTrue(detail_response.context["can_edit"])
+        self.assertContains(detail_response, reverse("doc_lock", args=[approved_document.sn]), html=False)

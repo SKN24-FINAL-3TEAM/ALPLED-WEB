@@ -29,8 +29,8 @@ RFP_TEMPLATE_URI = "s3://alpled-s3/system_docs/rfp_template.docx"
 RFP_TEMPLATE_FILENAME = "rfp_template.docx"
 TEMP_PASSWORD = "abc1234"
 TEMP_PASSWORD_REDIRECT_SESSION_KEY = "temp_password_redirect_url"
-USER_ID_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{7,10}$")
-USER_TEXT_PATTERN = re.compile(r"^[A-Za-z가-힣 ]+$")
+USER_ID_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9_]{7,10}$")
+USER_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9가-힣_ ]+$")
 USER_TEXT_MIN_LENGTH = 2
 USER_TEXT_MAX_LENGTH = 100
 
@@ -170,7 +170,7 @@ def _validate_required_user_text(value, field_subject):
         or length > USER_TEXT_MAX_LENGTH
         or not USER_TEXT_PATTERN.fullmatch(value)
     ):
-        return f"{field_subject} 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다."
+        return f"{field_subject} 한글, 영문, 숫자, 밑줄(_)로 최소 2자에서 최대 100자까지 입력할 수 있습니다."
     return ""
 
 
@@ -178,7 +178,7 @@ def _validate_optional_user_text(value, field_subject):
     if not value:
         return ""
     if len(value) > USER_TEXT_MAX_LENGTH or not USER_TEXT_PATTERN.fullmatch(value):
-        return f"{field_subject} 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다."
+        return f"{field_subject} 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다."
     return ""
 
 
@@ -281,7 +281,7 @@ def _create_user(request):
             return False, form_data
 
     if not USER_ID_PATTERN.fullmatch(form_data["user_id"]):
-        messages.error(request, "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.")
+        messages.error(request, "사원번호는 영문자, 숫자, 밑줄(_) 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.")
         return False, form_data
 
     if form_data["use_yn"] not in {YesNoChoices.YES, YesNoChoices.NO}:

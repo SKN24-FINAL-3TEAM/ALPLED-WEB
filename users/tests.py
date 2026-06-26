@@ -281,12 +281,12 @@ class UserViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'id="profile-name"', html=False)
-        self.assertContains(response, 'pattern="[A-Za-z가-힣 ]+"', html=False)
-        self.assertContains(response, 'title="이름은 한글 또는 영문으로 2자 이상 100자 이하로 입력해 주세요."', html=False)
+        self.assertContains(response, 'pattern="[A-Za-z0-9가-힣_ ]+"', html=False)
+        self.assertContains(response, 'title="이름은 한글, 영문, 숫자, 밑줄(_)로 2자 이상 100자 이하로 입력해 주세요."', html=False)
         self.assertContains(response, 'id="profile-department"', html=False)
-        self.assertContains(response, 'title="부서는 한글 또는 영문으로 최대 100자까지 입력해 주세요."', html=False)
+        self.assertContains(response, 'title="부서는 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력해 주세요."', html=False)
         self.assertContains(response, 'id="profile-position"', html=False)
-        self.assertContains(response, 'title="직급은 한글 또는 영문으로 최대 100자까지 입력해 주세요."', html=False)
+        self.assertContains(response, 'title="직급은 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력해 주세요."', html=False)
 
     def test_profile_update_rejects_invalid_name_department_and_position_values(self):
         self.client.force_login(self.admin)
@@ -297,15 +297,15 @@ class UserViewTests(TestCase):
         invalid_cases = [
             (
                 {"name": "A", "department": "Platform", "position": "Lead"},
-                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                "이름은 한글, 영문, 숫자, 밑줄(_)로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"name": "Admin", "department": "Platform1", "position": "Lead"},
-                "부서는 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"name": "Admin", "department": "Platform!", "position": "Lead"},
+                "부서는 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"name": "Admin", "department": "Platform", "position": "Lead1"},
-                "직급은 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"name": "Admin", "department": "Platform", "position": "Lead!"},
+                "직급은 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
         ]
 
@@ -451,37 +451,59 @@ class UserViewTests(TestCase):
         self.assertIsNone(created_user.department)
         self.assertIsNone(created_user.position)
 
+    def test_create_user_allows_numbers_and_underscore_in_user_fields(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.post(
+            reverse("user_list"),
+            {
+                "action": "create_user",
+                "user_id": "skn27_1_1_",
+                "name": "skn27 1팀 사용자1",
+                "department": "skn27_1",
+                "position": "사원",
+                "use_yn": YesNoChoices.YES,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+
+        created_user = User.objects.get(user_id="skn27_1_1_")
+        self.assertEqual(created_user.name, "skn27 1팀 사용자1")
+        self.assertEqual(created_user.department, "skn27_1")
+        self.assertEqual(created_user.position, "사원")
+
     def test_create_user_validates_registration_constraints(self):
         self.client.force_login(self.admin)
 
         invalid_cases = [
             (
                 {"user_id": "EMP202402", "name": "H", "department": "Development", "position": "Manager"},
-                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                "이름은 한글, 영문, 숫자, 밑줄(_)로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"user_id": "EMP202403", "name": "Hong", "department": "Development1", "position": "Manager"},
-                "부서는 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"user_id": "EMP202403", "name": "Hong", "department": "Development!", "position": "Manager"},
+                "부서는 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"user_id": "EMP202404", "name": "Hong", "department": "Development", "position": "Manager1"},
-                "직급은 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"user_id": "EMP202404", "name": "Hong", "department": "Development", "position": "Manager!"},
+                "직급은 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"user_id": "EMP20240", "name": "Hong1", "department": "Development", "position": "Manager"},
-                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                {"user_id": "EMP20240", "name": "Hong!", "department": "Development", "position": "Manager"},
+                "이름은 한글, 영문, 숫자, 밑줄(_)로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "EMPONLY", "name": "Hong", "department": "Development", "position": "Manager"},
-                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
+                "사원번호는 영문자, 숫자, 밑줄(_) 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "1234567", "name": "Hong", "department": "Development", "position": "Manager"},
-                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
+                "사원번호는 영문자, 숫자, 밑줄(_) 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "EMP-001", "name": "Hong", "department": "Development", "position": "Manager"},
-                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
+                "사원번호는 영문자, 숫자, 밑줄(_) 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
             ),
         ]
 
@@ -508,16 +530,16 @@ class UserViewTests(TestCase):
 
         invalid_cases = [
             (
-                {"name": "Member1", "department": "Platform", "position": "Lead"},
-                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                {"name": "Member!", "department": "Platform", "position": "Lead"},
+                "이름은 한글, 영문, 숫자, 밑줄(_)로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"name": "Member", "department": "Platform1", "position": "Lead"},
-                "부서는 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"name": "Member", "department": "Platform!", "position": "Lead"},
+                "부서는 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
             (
-                {"name": "Member", "department": "Platform", "position": "Lead1"},
-                "직급은 한글 또는 영문으로 최대 100자까지 입력할 수 있습니다.",
+                {"name": "Member", "department": "Platform", "position": "Lead!"},
+                "직급은 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력할 수 있습니다.",
             ),
         ]
 

@@ -13,8 +13,8 @@
         required
         minlength="2"
         maxlength="100"
-        pattern="[A-Za-z가-힣 ]+"
-        title="이름은 한글 또는 영문으로 2자 이상 100자 이하로 입력해 주세요."
+        pattern="[A-Za-z0-9가-힣_ ]+"
+        title="이름은 한글, 영문, 숫자, 밑줄(_)로 2자 이상 100자 이하로 입력해 주세요."
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="이름을 입력해주세요">
     </div>
@@ -29,8 +29,8 @@
         required
         minlength="7"
         maxlength="10"
-        pattern="(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9]{7,10}"
-        title="사원번호는 영문자와 숫자 조합으로 7자 이상 10자 이하로 입력해 주세요."
+        pattern="(?=.*[A-Za-z])(?=.*[0-9])[A-Za-z0-9_]{7,10}"
+        title="사원번호는 영문자, 숫자, 밑줄(_) 조합으로 7자 이상 10자 이하로 입력해 주세요."
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="사원번호를 입력해주세요">
     </div>
@@ -43,8 +43,8 @@
         type="text"
         value="{{ create_user_form.department }}"
         maxlength="100"
-        pattern="[A-Za-z가-힣 ]+"
-        title="부서는 한글 또는 영문으로 최대 100자까지 입력해 주세요."
+        pattern="[A-Za-z0-9가-힣_ ]+"
+        title="부서는 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력해 주세요."
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="부서를 입력해주세요">
     </div>
@@ -57,8 +57,8 @@
         type="text"
         value="{{ create_user_form.position }}"
         maxlength="100"
-        pattern="[A-Za-z가-힣 ]+"
-        title="직급은 한글 또는 영문으로 최대 100자까지 입력해 주세요."
+        pattern="[A-Za-z0-9가-힣_ ]+"
+        title="직급은 한글, 영문, 숫자, 밑줄(_)로 최대 100자까지 입력해 주세요."
         class="w-full rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400"
         placeholder="직급을 입력해주세요">
     </div>

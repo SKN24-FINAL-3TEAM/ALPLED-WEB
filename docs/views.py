@@ -101,6 +101,7 @@ from .services import (
     is_project_manager,
     is_project_participant,
     is_working_document,
+    latest_confirmed_document,
     mark_generation_confirmed,
     parse_callback_payload,
     reject_request,
@@ -1271,12 +1272,14 @@ def document_detail(request, document_sn):
         )
         if failed_generation_job is not None and failed_generation_job.document_id != document.sn:
             failed_generation_job = None
+    latest_confirmed = latest_confirmed_document(current_project, document.document_type_id)
+    is_latest_confirmed = latest_confirmed is not None and latest_confirmed.sn == document.sn
     can_lock_for_edit = (
         (not document_change_blocked_by_job)
         and (not is_history_view)
         and state == "view"
         and pending_approval is None
-        and is_working_document(document)
+        and (is_working_document(document) or is_latest_confirmed)
     )
     can_cancel_approval = pending_approval is not None and pending_approval.created_by_id == actor.sn
     can_auto_apply = (
