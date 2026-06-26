@@ -779,12 +779,27 @@ class DocumentWorkflowViewTests(TestCase):
             document = self._create_completed_initial_document(sn=index, document_type=code)
             completed_documents[code.code] = document.sn
         self._set_generation_state(confirmed_documents=completed_documents)
+        old_regenerated_erd = self._create_completed_initial_document(sn=190, document_type=self.erd_code)
+        old_regenerated_erd.version = "1.2"
+        old_regenerated_erd.save(update_fields=["version"])
+        self._create_generation_job(
+            sn=190,
+            job_id="job-erd-old-completed",
+            document=old_regenerated_erd,
+            document_type=self.erd_code,
+            job_status=self.progress_completed,
+        )
 
         reset_response = self.client.post(
             reverse("doc_generate"),
             {"action": "reset_generation", "docs_cd": "DOC_ERD"},
         )
         self.assertEqual(reset_response.status_code, 302)
+
+        reset_follow_up = self.client.get(reset_response["Location"])
+        self.assertEqual(reset_follow_up.status_code, 200)
+        reset_progress_by_code = {row["code"]: row for row in reset_follow_up.context["progress_rows"]}
+        self.assertEqual(reset_progress_by_code["DOC_ERD"]["status"], "pending")
 
         regenerated_erd = self._create_completed_initial_document(sn=200, document_type=self.erd_code)
         regenerated_erd.version = "1.3"

@@ -1629,6 +1629,7 @@ def hydrate_generation_state_from_existing_documents(project, state):
     if legacy_regeneration_from in sequence and not regeneration_targets:
         regeneration_targets.add(legacy_regeneration_from)
     restorable_regeneration_targets = {legacy_regeneration_from} if legacy_regeneration_from in sequence else set()
+    regeneration_job_baseline_sns = state.get("regeneration_job_baseline_sns") or {}
 
     for code in sequence:
         if code in regeneration_targets:
@@ -1643,6 +1644,8 @@ def hydrate_generation_state_from_existing_documents(project, state):
                     latest_job is not None
                     and latest_job.job_status_id == PROGRESS_COMPLETED
                     and job_document is not None
+                    and code in regeneration_job_baseline_sns
+                    and latest_job.sn > int(regeneration_job_baseline_sns.get(code) or 0)
                 ):
                     if is_working_document(job_document):
                         draft_documents[str(code)] = job_document.sn
@@ -1673,7 +1676,12 @@ def begin_generation_regeneration(session, project, document_code):
     state = _build_empty_generation_state(project)
     state["regeneration_mode"] = True
     state["regeneration_from"] = target_code
-    state["regeneration_targets"] = list(get_generation_regeneration_target_codes(target_code))
+    regeneration_targets = list(get_generation_regeneration_target_codes(target_code))
+    state["regeneration_targets"] = regeneration_targets
+    state["regeneration_job_baseline_sns"] = {
+        code: getattr(find_generation_job(project, code, job_kind=GENERATION_JOB_KIND_INITIAL), "sn", 0) or 0
+        for code in regeneration_targets
+    }
     hydrate_generation_state_from_existing_documents(project, state)
     save_generation_state(session, state)
     return state
