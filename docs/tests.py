@@ -770,6 +770,42 @@ class DocumentWorkflowViewTests(TestCase):
                     expected_status = "pending" if code in pending_codes else "confirmed"
                     self.assertEqual(progress_by_code[code]["status"], expected_status)
 
+    def test_regeneration_progress_recovers_completed_job_document_for_target(self):
+        completed_documents = {}
+        for index, code in enumerate(
+            [self.srs_code, self.itf_code, self.arch_code, self.erd_code, self.db_code, self.ts_code],
+            start=100,
+        ):
+            document = self._create_completed_initial_document(sn=index, document_type=code)
+            completed_documents[code.code] = document.sn
+        self._set_generation_state(confirmed_documents=completed_documents)
+
+        reset_response = self.client.post(
+            reverse("doc_generate"),
+            {"action": "reset_generation", "docs_cd": "DOC_ERD"},
+        )
+        self.assertEqual(reset_response.status_code, 302)
+
+        regenerated_erd = self._create_completed_initial_document(sn=200, document_type=self.erd_code)
+        regenerated_erd.version = "1.3"
+        regenerated_erd.save(update_fields=["version"])
+        self._create_generation_job(
+            sn=200,
+            job_id="job-erd-completed",
+            document=regenerated_erd,
+            document_type=self.erd_code,
+            job_status=self.progress_completed,
+        )
+
+        response = self.client.get(reset_response["Location"])
+
+        self.assertEqual(response.status_code, 200)
+        progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
+        self.assertEqual(progress_by_code["DOC_ERD"]["status"], "confirmed")
+        self.assertEqual(progress_by_code["DOC_ERD"]["document_sn"], regenerated_erd.sn)
+        self.assertEqual(progress_by_code["DOC_DB"]["status"], "pending")
+        self.assertContains(response, reverse("doc_detail", args=[regenerated_erd.sn]), html=False)
+
     def test_start_current_generation_ajax_returns_job_payload(self):
         project_file = self._create_project_file()
         self._set_generation_state(selected_file_ids=[project_file.sn])

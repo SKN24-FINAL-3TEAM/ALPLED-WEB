@@ -1628,6 +1628,7 @@ def hydrate_generation_state_from_existing_documents(project, state):
     legacy_regeneration_from = state.get("regeneration_from")
     if legacy_regeneration_from in sequence and not regeneration_targets:
         regeneration_targets.add(legacy_regeneration_from)
+    restorable_regeneration_targets = {legacy_regeneration_from} if legacy_regeneration_from in sequence else set()
 
     for code in sequence:
         if code in regeneration_targets:
@@ -1635,6 +1636,18 @@ def hydrate_generation_state_from_existing_documents(project, state):
             confirmed.pop(code, None)
             draft_documents.pop(str(code), None)
             draft_documents.pop(code, None)
+            if code in restorable_regeneration_targets:
+                latest_job = find_generation_job(project, code, job_kind=GENERATION_JOB_KIND_INITIAL)
+                job_document = getattr(latest_job, "document", None)
+                if (
+                    latest_job is not None
+                    and latest_job.job_status_id == PROGRESS_COMPLETED
+                    and job_document is not None
+                ):
+                    if is_working_document(job_document):
+                        draft_documents[str(code)] = job_document.sn
+                    else:
+                        confirmed[str(code)] = job_document.sn
             continue
         if str(code) in confirmed:
             confirmed_document = get_generation_saved_document(project, code, state)
