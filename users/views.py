@@ -25,7 +25,8 @@ from .models import User
 DEFAULT_DOCUMENT_CODE = "DOC_SRS"
 TEMP_PASSWORD = "abc1234"
 TEMP_PASSWORD_REDIRECT_SESSION_KEY = "temp_password_redirect_url"
-USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9]{7,10}$")
+USER_ID_PATTERN = re.compile(r"^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{7,10}$")
+USER_TEXT_PATTERN = re.compile(r"^[A-Za-z가-힣 ]+$")
 USER_TEXT_MIN_LENGTH = 2
 USER_TEXT_MAX_LENGTH = 100
 
@@ -144,8 +145,12 @@ def _build_create_form_data(request=None):
 
 def _validate_user_text(value, field_subject):
     length = len(value)
-    if length < USER_TEXT_MIN_LENGTH or length > USER_TEXT_MAX_LENGTH:
-        return f"{field_subject} 최소 2자에서 최대 100자까지 입력할 수 있습니다."
+    if (
+        length < USER_TEXT_MIN_LENGTH
+        or length > USER_TEXT_MAX_LENGTH
+        or not USER_TEXT_PATTERN.fullmatch(value)
+    ):
+        return f"{field_subject} 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다."
     return ""
 
 
@@ -176,6 +181,19 @@ def _update_profile(request, user):
         messages.error(request, "이름을 입력해 주세요.")
         return False, form_data
 
+    error_message = _validate_user_text(form_data["name"], "이름은")
+    if error_message:
+        messages.error(request, error_message)
+        return False, form_data
+
+    for field_name, field_label in (("department", "부서는"), ("position", "직급은")):
+        if not form_data[field_name]:
+            continue
+        error_message = _validate_user_text(form_data[field_name], field_label)
+        if error_message:
+            messages.error(request, error_message)
+            return False, form_data
+
     password_change_requested = bool(form_data["new_password"] or form_data["new_password_confirm"])
     force_password_change = user.tmpr_pswd_yn == YesNoChoices.YES
     if force_password_change and not password_change_requested:
@@ -188,6 +206,9 @@ def _update_profile(request, user):
             return False, form_data
         if form_data["new_password"] != form_data["new_password_confirm"]:
             messages.error(request, "새 비밀번호와 비밀번호 확인이 일치하지 않습니다.")
+            return False, form_data
+        if force_password_change and form_data["new_password"] == TEMP_PASSWORD:
+            messages.error(request, "임시 비밀번호와 동일한 비밀번호로 변경할 수 없습니다.")
             return False, form_data
 
     user.name = form_data["name"]

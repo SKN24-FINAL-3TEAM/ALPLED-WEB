@@ -250,6 +250,29 @@ class UserViewTests(TestCase):
         follow_response = self.client.get(self._doc_history_url())
         self.assertEqual(follow_response.status_code, 200)
 
+    def test_temp_password_user_cannot_reuse_default_password_on_profile_update(self):
+        temp_user = self._create_temp_user()
+        self.client.force_login(temp_user)
+
+        response = self.client.post(
+            reverse("user_profile"),
+            {
+                "name": "Temp User",
+                "department": "Security",
+                "position": "Engineer",
+                "new_password": TEMP_PASSWORD,
+                "new_password_confirm": TEMP_PASSWORD,
+            },
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "임시 비밀번호와 동일한 비밀번호로 변경할 수 없습니다.")
+
+        temp_user.refresh_from_db()
+        self.assertEqual(temp_user.tmpr_pswd_yn, YesNoChoices.YES)
+        self.assertTrue(temp_user.check_password(TEMP_PASSWORD))
+
     def test_non_admin_access_to_user_list_redirects_to_home(self):
         self.client.force_login(self.member)
 
@@ -304,15 +327,27 @@ class UserViewTests(TestCase):
         invalid_cases = [
             (
                 {"user_id": "EMP202402", "name": "H", "department": "Development", "position": "Manager"},
-                "이름은 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "EMP202403", "name": "Hong", "department": "D", "position": "Manager"},
-                "부서는 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                "부서는 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "EMP202404", "name": "Hong", "department": "Development", "position": "M"},
-                "직급은 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+                "직급은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "EMP20240", "name": "Hong1", "department": "Development", "position": "Manager"},
+                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "EMPONLY", "name": "Hong", "department": "Development", "position": "Manager"},
+                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"user_id": "1234567", "name": "Hong", "department": "Development", "position": "Manager"},
+                "사원번호는 영문자와 숫자 조합으로 최소 7자에서 최대 10자까지 입력할 수 있습니다.",
             ),
             (
                 {"user_id": "EMP-001", "name": "Hong", "department": "Development", "position": "Manager"},
@@ -336,6 +371,46 @@ class UserViewTests(TestCase):
                 self.assertContains(response, message)
                 self.assertContains(response, 'data-open-user-create-modal="true"', html=False)
                 self.assertFalse(User.objects.filter(user_id=payload["user_id"]).exists())
+
+    def test_update_user_validates_detail_modal_constraints(self):
+        self.client.force_login(self.admin)
+        original_values = (self.member.name, self.member.department, self.member.position)
+
+        invalid_cases = [
+            (
+                {"name": "Member1", "department": "Platform", "position": "Lead"},
+                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"name": "Member", "department": "QA1", "position": "Lead"},
+                "부서는 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"name": "Member", "department": "Platform", "position": "Lead1"},
+                "직급은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+        ]
+
+        for payload, message in invalid_cases:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    reverse("user_list"),
+                    {
+                        "action": "update_user",
+                        "user_sn": str(self.member.sn),
+                        "use_yn": YesNoChoices.YES,
+                        **payload,
+                    },
+                    follow=True,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, message)
+                self.member.refresh_from_db()
+                self.assertEqual(
+                    (self.member.name, self.member.department, self.member.position),
+                    original_values,
+                )
 
     def test_create_user_rejects_duplicate_user_id(self):
         self.client.force_login(self.admin)
