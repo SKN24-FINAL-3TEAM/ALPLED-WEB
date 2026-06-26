@@ -220,6 +220,61 @@ class UserViewTests(TestCase):
         self.assertEqual(self.admin.position, "Lead")
         self.assertEqual(self.admin.tmpr_pswd_yn, YesNoChoices.NO)
 
+    def test_profile_page_renders_same_validation_constraints_as_user_modals(self):
+        self.client.force_login(self.admin)
+
+        response = self.client.get(reverse("user_profile"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="profile-name"', html=False)
+        self.assertContains(response, 'pattern="[A-Za-z가-힣 ]+"', html=False)
+        self.assertContains(response, 'title="이름은 한글 또는 영문으로 2자 이상 100자 이하로 입력해 주세요."', html=False)
+        self.assertContains(response, 'id="profile-department"', html=False)
+        self.assertContains(response, 'title="부서는 한글 또는 영문으로 2자 이상 100자 이하로 입력해 주세요."', html=False)
+        self.assertContains(response, 'id="profile-position"', html=False)
+        self.assertContains(response, 'title="직급은 한글 또는 영문으로 2자 이상 100자 이하로 입력해 주세요."', html=False)
+
+    def test_profile_update_rejects_invalid_name_department_and_position_values(self):
+        self.client.force_login(self.admin)
+        self.client.get(reverse("user_profile"))
+        self.admin.refresh_from_db()
+        original_values = (self.admin.name, self.admin.department, self.admin.position)
+
+        invalid_cases = [
+            (
+                {"name": "A", "department": "Platform", "position": "Lead"},
+                "이름은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"name": "Admin", "department": "Platform1", "position": "Lead"},
+                "부서는 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+            (
+                {"name": "Admin", "department": "Platform", "position": "Lead1"},
+                "직급은 한글 또는 영문으로 최소 2자에서 최대 100자까지 입력할 수 있습니다.",
+            ),
+        ]
+
+        for payload, message in invalid_cases:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    reverse("user_profile"),
+                    {
+                        "new_password": "",
+                        "new_password_confirm": "",
+                        **payload,
+                    },
+                    follow=True,
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, message)
+                self.admin.refresh_from_db()
+                self.assertEqual(
+                    (self.admin.name, self.admin.department, self.admin.position),
+                    original_values,
+                )
+
     def test_profile_password_change_clears_temp_password_flag_and_keeps_session(self):
         temp_user = self._create_temp_user()
         self.client.force_login(temp_user)
