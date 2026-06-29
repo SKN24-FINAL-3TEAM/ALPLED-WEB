@@ -511,6 +511,27 @@ class DocumentWorkflowViewTests(TestCase):
         self.assertEqual(completed_response.status_code, 200)
         self.assertFalse(completed_response.context["can_generate"])
 
+    def test_generate_view_shows_latest_previews_when_all_document_types_exist(self):
+        latest_srs = None
+        for index, code in enumerate(
+            [self.srs_code, self.itf_code, self.arch_code, self.erd_code, self.db_code, self.ts_code],
+            start=1,
+        ):
+            document = self._create_document(sn=index, version="1.0", document_type=code)
+            document.progress_status = self.progress_completed
+            document.save(update_fields=["progress_status"])
+            if code == self.srs_code:
+                latest_srs = document
+
+        response = self.client.get(reverse("doc_generate"), {"docs_cd": "DOC_SRS", "resume": "1"})
+
+        self.assertEqual(response.status_code, 200)
+        progress_by_code = {row["code"]: row for row in response.context["progress_rows"]}
+        self.assertEqual(progress_by_code["DOC_SRS"]["document_sn"], latest_srs.sn)
+        self.assertContains(response, reverse("doc_detail", args=[latest_srs.sn]), html=False)
+        self.assertContains(response, "미리보기")
+        self.assertNotContains(response, "현재 프로젝트에 할당된 구성원만")
+
     def test_history_list_excludes_version_zero_and_keeps_latest_duplicate_version(self):
         self._create_document(sn=1, version="1.0", document_type=self.srs_code)
         newer = self._create_document(sn=2, version="1.0", document_type=self.srs_code)

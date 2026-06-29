@@ -383,7 +383,7 @@
                 {% if row.detail_url %}
                   <div class="mt-2 flex flex-wrap gap-1.5">
                     <a href="{{ row.detail_url }}" class="inline-flex min-w-[70px] items-center justify-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50">
-                    {% if row.status == "review" %}초안 미리보기{% else %}저장본 보기{% endif %}
+                    {% if row.status == "review" %}초안 미리보기{% else %}미리보기{% endif %}
                     </a>
                     {% if row.download_url %}
                       <a href="{{ row.download_url }}" class="inline-flex min-w-[72px] items-center justify-center whitespace-nowrap rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-slate-700">다운로드</a>

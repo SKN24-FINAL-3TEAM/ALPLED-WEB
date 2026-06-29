@@ -864,7 +864,7 @@ def document_generate(request):
     architecture_form = _build_architecture_form_data()
     open_arch_form = request.GET.get("arch_form") == "1"
 
-    if not can_access_initial_generation(current_project, actor, generation_state):
+    if not is_project_participant(current_project, actor):
         messages.error(request, "현재 프로젝트에 할당된 구성원만 산출물 생성을 진행할 수 있습니다.")
         return redirect(f"{reverse('doc_history_list')}?docs_cd={document_code}")
 
